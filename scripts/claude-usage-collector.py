@@ -19,9 +19,7 @@ from collections import defaultdict
 CLAUDE_DIR = Path.home() / ".claude"
 OUTPUT_FILE = CLAUDE_DIR / "widget-data.json"
 STATUS_CACHE_FILE = CLAUDE_DIR / "widget-status-prev.json"
-
-# Organization ID (extracted from credentials)
-ORG_ID = "AUTO_DETECT"
+CONFIG_FILE = CLAUDE_DIR / "widget-config.json"
 
 # Anthropic pricing (per 1M tokens) — May 2025 public prices
 PRICING = {
@@ -244,13 +242,76 @@ def get_claude_cookies():
     return ""
 
 
+def load_config():
+    """Load widget config from ~/.claude/widget-config.json."""
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def save_config(cfg):
+    """Persist widget config."""
+    try:
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+    except Exception:
+        pass
+
+
+def detect_org_id(cookies):
+    """Auto-detect org_id from lastActiveOrg cookie or /api/organizations."""
+    # 1. Try lastActiveOrg cookie (fastest)
+    for pair in cookies.split(";"):
+        pair = pair.strip()
+        if pair.startswith("lastActiveOrg="):
+            val = pair.split("=", 1)[1].strip()
+            if len(val) > 10:
+                return val
+
+    # 2. Fallback: query /api/organizations
+    try:
+        req = urllib.request.Request("https://claude.ai/api/organizations")
+        req.add_header("Cookie", cookies)
+        req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0")
+        req.add_header("anthropic-client-platform", "web_claude_ai")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            orgs = json.loads(resp.read().decode())
+            if orgs and isinstance(orgs, list):
+                return orgs[0].get("uuid") or orgs[0].get("id", "")
+    except Exception:
+        pass
+    return ""
+
+
+def get_org_id(cookies=""):
+    """Return org_id from config, or detect and save it."""
+    cfg = load_config()
+    org_id = cfg.get("org_id", "")
+    if org_id:
+        return org_id
+
+    if not cookies:
+        cookies = get_claude_cookies()
+    org_id = detect_org_id(cookies)
+    if org_id:
+        cfg["org_id"] = org_id
+        save_config(cfg)
+    return org_id
+
+
 def _api_request(path):
     """Make an authenticated request to claude.ai API."""
     cookies = get_claude_cookies()
     if not cookies:
         return None
 
-    url = f"https://claude.ai/api/organizations/{ORG_ID}/{path}"
+    org_id = get_org_id(cookies)
+    if not org_id:
+        return None
+
+    url = f"https://claude.ai/api/organizations/{org_id}/{path}"
     req = urllib.request.Request(url)
     req.add_header("Cookie", cookies)
     req.add_header("Content-Type", "application/json")
