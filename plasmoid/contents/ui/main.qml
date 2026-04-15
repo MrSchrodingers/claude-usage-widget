@@ -113,52 +113,72 @@ PlasmoidItem {
             anchors.fill: parent
             spacing: Kirigami.Units.smallSpacing
 
-            // Official Claude logo in panel
+            // Claude logo — smallMedium for better visibility
             Image {
                 source: Qt.resolvedUrl("../icons/claude-logo.svg")
-                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                sourceSize: Qt.size(Kirigami.Units.iconSizes.small, Kirigami.Units.iconSizes.small)
+                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                sourceSize: Qt.size(Kirigami.Units.iconSizes.smallMedium, Kirigami.Units.iconSizes.smallMedium)
                 fillMode: Image.PreserveAspectFit
             }
 
+            // Session percentage — bigger and bolder
             PlasmaComponents3.Label {
                 property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
                 text: root.hasData ? Math.round(pct) + "%" : "--"
-                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.15
                 font.weight: Font.Bold
                 color: limitColor(pct)
             }
 
-            // Mini session bar
+            // Session bar — taller for prominence
             Rectangle {
-                Layout.preferredWidth: 28; Layout.preferredHeight: 4
+                Layout.preferredWidth: 34; Layout.preferredHeight: 5
                 Layout.alignment: Qt.AlignVCenter
-                radius: 2
+                radius: 3
                 color: root.subtleBorder
                 Rectangle {
                     property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
                     width: parent.width * Math.min(1, pct / 100)
-                    height: parent.height; radius: 2
+                    height: parent.height; radius: 3
                     color: barFill(pct, root.claudeAmber)
                     Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
                 }
             }
 
-            // Service status dot (pulsing when degraded/outage)
-            Rectangle {
-                id: statusDot
+            // Service health: dot + short label when not Healthy
+            RowLayout {
+                id: statusCompact
                 property string indicator: root.usageData.serviceStatus?.indicator ?? "none"
                 visible: root.hasData && indicator !== "none" && indicator !== "" && indicator !== "unknown"
-                width: 5; height: 5; radius: 2.5
-                color: statusColor(indicator)
+                spacing: 3
                 Layout.alignment: Qt.AlignVCenter
 
-                SequentialAnimation on opacity {
-                    running: statusDot.visible && (statusDot.indicator === "major" || statusDot.indicator === "critical")
-                    loops: Animation.Infinite
-                    NumberAnimation { to: 0.25; duration: 700; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 1.0;  duration: 700; easing.type: Easing.InOutSine }
+                Rectangle {
+                    id: compactDot
+                    width: 8; height: 8; radius: 4
+                    color: statusColor(statusCompact.indicator)
+                    Layout.alignment: Qt.AlignVCenter
+
+                    SequentialAnimation on opacity {
+                        running: statusCompact.indicator === "major" || statusCompact.indicator === "critical"
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.2; duration: 650; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutSine }
+                    }
+                }
+
+                PlasmaComponents3.Label {
+                    text: {
+                        var ind = statusCompact.indicator;
+                        if (ind === "minor")    return "Degraded";
+                        if (ind === "major")    return "Outage";
+                        if (ind === "critical") return "Critical";
+                        return "";
+                    }
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.80
+                    font.weight: Font.DemiBold
+                    color: statusColor(statusCompact.indicator)
                 }
             }
         }
