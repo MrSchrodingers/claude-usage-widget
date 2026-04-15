@@ -16,6 +16,9 @@ PlasmoidItem {
         var inc = usageData.serviceStatus?.active_incidents ?? [];
         return inc.length > 0 ? [inc[0]] : [];
     }
+    property int dumbScore: usageData.dumbness?.score ?? 0
+    property string dumbLevel: usageData.dumbness?.level ?? "genius"
+    property bool isDumb: dumbScore >= 25
 
     readonly property int refreshInterval: 30000
 
@@ -214,13 +217,23 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
 
-                // Clawd mascot (official pixel art)
+                // Mascot: Clawd (healthy) or Burrinho (degraded)
                 Image {
-                    source: Qt.resolvedUrl("../icons/clawd.svg")
+                    source: root.isDumb
+                        ? Qt.resolvedUrl("../icons/burrinho.svg")
+                        : Qt.resolvedUrl("../icons/clawd.svg")
                     Layout.preferredWidth: Kirigami.Units.iconSizes.huge
                     Layout.preferredHeight: Kirigami.Units.iconSizes.huge
                     sourceSize: Qt.size(Kirigami.Units.iconSizes.huge, Kirigami.Units.iconSizes.huge)
                     fillMode: Image.PreserveAspectFit
+
+                    // Wobble animation when dumb
+                    SequentialAnimation on rotation {
+                        running: root.isDumb
+                        loops: Animation.Infinite
+                        NumberAnimation { to: -8; duration: 400; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 8;  duration: 400; easing.type: Easing.InOutSine }
+                    }
                 }
 
                 ColumnLayout {
@@ -672,6 +685,241 @@ PlasmoidItem {
                             }
                         }
                     }
+                }
+            }
+
+            // ══════════════════════════════════
+            // ── Intelligence / Dumbness Card ──
+            // ══════════════════════════════════
+            Rectangle {
+                Layout.fillWidth: true
+                visible: root.dumbScore > 0
+                radius: 10
+                color: {
+                    if (root.dumbScore >= 75) return Qt.rgba(0.937, 0.267, 0.267, 0.12);
+                    if (root.dumbScore >= 50) return Qt.rgba(0.976, 0.451, 0.086, 0.10);
+                    if (root.dumbScore >= 25) return Qt.rgba(0.961, 0.620, 0.043, 0.10);
+                    return root.cardBg;
+                }
+                border.width: 1
+                border.color: root.subtleBorder
+                implicitHeight: dumbCol.implicitHeight + Kirigami.Units.mediumSpacing * 2
+
+                ColumnLayout {
+                    id: dumbCol
+                    anchors.fill: parent
+                    anchors.margins: Kirigami.Units.mediumSpacing
+                    spacing: 4
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        PlasmaComponents3.Label {
+                            text: {
+                                var lvl = root.dumbLevel;
+                                if (lvl === "braindead") return "🧠 Braindead";
+                                if (lvl === "dumb") return "🐴 Dumb";
+                                if (lvl === "slow") return "🐌 Slow";
+                                return "🤔 Hmm";
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.weight: Font.Bold
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        // Score badge
+                        Rectangle {
+                            radius: height / 2
+                            color: {
+                                if (root.dumbScore >= 75) return Qt.rgba(0.937, 0.267, 0.267, 0.25);
+                                if (root.dumbScore >= 50) return Qt.rgba(0.976, 0.451, 0.086, 0.25);
+                                return Qt.rgba(0.961, 0.620, 0.043, 0.25);
+                            }
+                            implicitWidth: _dumbLabel.implicitWidth + 14
+                            implicitHeight: _dumbLabel.implicitHeight + 6
+
+                            PlasmaComponents3.Label {
+                                id: _dumbLabel
+                                anchors.centerIn: parent
+                                text: root.dumbScore + "/100"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                                font.weight: Font.Bold
+                                color: {
+                                    if (root.dumbScore >= 75) return root.redAlert;
+                                    if (root.dumbScore >= 50) return "#F97316";
+                                    return root.claudeAmberLight;
+                                }
+                            }
+                        }
+                    }
+
+                    // Reasons list
+                    Repeater {
+                        model: root.usageData.dumbness?.reasons ?? []
+                        PlasmaComponents3.Label {
+                            Layout.fillWidth: true
+                            text: "  • " + modelData
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                            opacity: 0.55
+                        }
+                    }
+
+                    // Adaptive thinking workaround tip
+                    PlasmaComponents3.Label {
+                        Layout.fillWidth: true
+                        visible: !(root.usageData.adaptiveThinking?.adaptive_thinking ?? true)
+                        text: "Tip: Adaptive Thinking is OFF in settings.json"
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                        font.italic: true
+                        opacity: 0.45
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+
+            // ══════════════════════════════════
+            // ── Burn Rate & Errors Card ──
+            // ══════════════════════════════════
+            Rectangle {
+                Layout.fillWidth: true
+                radius: 10
+                color: root.cardBg
+                implicitHeight: burnCol.implicitHeight + Kirigami.Units.mediumSpacing * 2
+
+                ColumnLayout {
+                    id: burnCol
+                    anchors.fill: parent
+                    anchors.margins: Kirigami.Units.mediumSpacing
+                    spacing: 6
+
+                    PlasmaComponents3.Label {
+                        text: "Activity"
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                        font.weight: Font.DemiBold
+                        opacity: 0.5
+                    }
+
+                    // Burn rate row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Kirigami.Icon {
+                            source: "speedometer"
+                            Layout.preferredWidth: 14; Layout.preferredHeight: 14
+                            opacity: 0.5
+                        }
+
+                        PlasmaComponents3.Label {
+                            text: "Burn rate"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            opacity: 0.6
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        PlasmaComponents3.Label {
+                            property int rate: root.usageData.burnRate?.output_per_hour ?? 0
+                            text: {
+                                if (rate >= 1e6) return (rate / 1e6).toFixed(1) + "M/h";
+                                if (rate >= 1e3) return (rate / 1e3).toFixed(0) + "K/h";
+                                return rate + "/h";
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.weight: Font.Bold
+                            color: rate > 500000 ? root.claudeAmberLight : Kirigami.Theme.textColor
+                        }
+                    }
+
+                    // Error rate row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Kirigami.Icon {
+                            source: "dialog-warning-symbolic"
+                            Layout.preferredWidth: 14; Layout.preferredHeight: 14
+                            opacity: 0.5
+                        }
+
+                        PlasmaComponents3.Label {
+                            text: "Errors (2h)"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            opacity: 0.6
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        PlasmaComponents3.Label {
+                            property int errs: root.usageData.errorRate?.total ?? 0
+                            text: errs > 0 ? errs + " errors" : "None"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.weight: Font.Bold
+                            color: errs > 5 ? root.redAlert : errs > 0 ? root.claudeAmberLight : root.greenAccent
+                        }
+                    }
+
+                    // Adaptive thinking status row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Kirigami.Icon {
+                            source: "preferences-system"
+                            Layout.preferredWidth: 14; Layout.preferredHeight: 14
+                            opacity: 0.5
+                        }
+
+                        PlasmaComponents3.Label {
+                            text: "Adaptive Thinking"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            opacity: 0.6
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        PlasmaComponents3.Label {
+                            property bool on: root.usageData.adaptiveThinking?.adaptive_thinking ?? true
+                            text: on ? "ON" : "OFF"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.weight: Font.Bold
+                            color: on ? root.greenAccent : root.redAlert
+                        }
+                    }
+                }
+            }
+
+            // ══════════════════════════════════
+            // ── Quick Actions ──
+            // ══════════════════════════════════
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                PlasmaComponents3.Button {
+                    Layout.fillWidth: true
+                    text: "claude.ai"
+                    icon.name: "internet-web-browser"
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                    onClicked: Qt.openUrlExternally("https://claude.ai")
+                }
+
+                PlasmaComponents3.Button {
+                    Layout.fillWidth: true
+                    text: "Status"
+                    icon.name: "network-connect"
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                    onClicked: Qt.openUrlExternally("https://status.claude.com")
+                }
+
+                PlasmaComponents3.Button {
+                    Layout.fillWidth: true
+                    text: "DownDetector"
+                    icon.name: "globe"
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                    onClicked: Qt.openUrlExternally("https://downdetector.com/status/claude-ai/")
                 }
             }
 

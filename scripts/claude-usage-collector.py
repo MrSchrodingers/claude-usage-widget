@@ -428,6 +428,143 @@ def notify_status_change(new_status):
         pass
 
 
+def detect_adaptive_thinking():
+    """Check Claude Code settings for adaptive thinking / 1M context."""
+    settings_file = CLAUDE_DIR / "settings.json"
+    result = {"adaptive_thinking": True, "context_1m": True}
+    if settings_file.exists():
+        try:
+            settings = json.loads(settings_file.read_text())
+            env = settings.get("env", {})
+            result["adaptive_thinking"] = env.get("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING", "0") != "1"
+            result["context_1m"] = env.get("CLAUDE_CODE_DISABLE_1M_CONTEXT", "0") != "1"
+        except Exception:
+            pass
+    return result
+
+
+def calculate_error_rate(hours=2):
+    """Count API errors in recent JSONL files (429, 529, overloaded, etc.)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    mtime_cutoff = (cutoff - timedelta(hours=1)).timestamp()
+    errors = {"rate_limit": 0, "overloaded": 0, "server_error": 0, "other": 0, "total": 0}
+
+    projects_dir = CLAUDE_DIR / "projects"
+    if not projects_dir.exists():
+        return errors
+
+    for jsonl_file in projects_dir.rglob("*.jsonl"):
+        try:
+            if jsonl_file.stat().st_mtime < mtime_cutoff:
+                continue
+        except OSError:
+            continue
+        try:
+            with open(jsonl_file) as f:
+                for line in f:
+                    if '"api_error"' not in line and '"error"' not in line:
+                        continue
+                    try:
+                        record = json.loads(line.strip())
+                    except json.JSONDecodeError:
+                        continue
+                    ts = record.get("timestamp")
+                    rec_date = parse_timestamp(ts) if ts else None
+                    if not rec_date or rec_date < cutoff:
+                        continue
+                    if record.get("subtype") != "api_error" and record.get("type") != "system":
+                        continue
+                    err = record.get("error", {})
+                    status = err.get("status", 0)
+                    nested = err.get("error", {}).get("error", {})
+                    err_type = str(nested.get("type", ""))
+
+                    errors["total"] += 1
+                    if status == 429 or "rate_limit" in err_type:
+                        errors["rate_limit"] += 1
+                    elif status == 529 or "overloaded" in err_type:
+                        errors["overloaded"] += 1
+                    elif status >= 500:
+                        errors["server_error"] += 1
+                    else:
+                        errors["other"] += 1
+        except (PermissionError, OSError):
+            continue
+    return errors
+
+
+def calculate_burn_rate():
+    """Token consumption rate (tokens/hour) for rolling 2h window."""
+    now = datetime.now(timezone.utc)
+    two_h = now - timedelta(hours=2)
+    tokens, _, _, _ = parse_sessions_in_window(two_h, now)
+    total_output = sum(t["output"] for t in tokens.values())
+    total_all = sum(
+        t["input"] + t["output"] + t["cache_read"] + t["cache_create"]
+        for t in tokens.values()
+    )
+    return {
+        "output_per_hour": round(total_output / 2),
+        "total_per_hour": round(total_all / 2),
+    }
+
+
+def compute_dumbness_score(service_status, session_pct, error_rate, adaptive_config):
+    """Composite 'dumbness' score: 0 (genius) to 100 (braindead).
+
+    Combines: service health + rate limit pressure + API errors + config issues.
+    """
+    score = 0
+    reasons = []
+
+    # Service health (0-40 pts)
+    if service_status:
+        ind = service_status.get("indicator", "none")
+        if ind == "critical":
+            score += 40; reasons.append("Critical outage")
+        elif ind == "major":
+            score += 30; reasons.append("Major outage")
+        elif ind == "minor":
+            score += 15; reasons.append("Degraded service")
+
+    # Session utilization pressure (0-25 pts)
+    if session_pct > 90:
+        score += 25; reasons.append("Session >90%")
+    elif session_pct > 80:
+        score += 15; reasons.append("Session >80%")
+    elif session_pct > 60:
+        score += 5
+
+    # Recent API errors (0-20 pts)
+    total_err = error_rate.get("total", 0)
+    if total_err > 10:
+        score += 20; reasons.append(f"{total_err} errors/2h")
+    elif total_err > 3:
+        score += 10; reasons.append(f"{total_err} errors/2h")
+    elif total_err > 0:
+        score += 5
+
+    # Adaptive thinking / context config (0-15 pts)
+    if not adaptive_config.get("adaptive_thinking", True):
+        score += 10; reasons.append("Adaptive thinking OFF")
+    if not adaptive_config.get("context_1m", True):
+        score += 5; reasons.append("1M context OFF")
+
+    score = min(100, score)
+    if score < 10:
+        level = "genius"
+    elif score < 25:
+        level = "smart"
+    elif score < 50:
+        level = "slow"
+    elif score < 75:
+        level = "dumb"
+    else:
+        level = "braindead"
+
+    return {"score": score, "level": level, "reasons": reasons}
+
+
 def build_rate_limits():
     """Fetch rate limits from Claude.ai API (real data).
 
@@ -553,6 +690,13 @@ def build_widget_data():
     service_status = fetch_service_status()
     notify_status_change(service_status)
 
+    # New metrics
+    error_rate = calculate_error_rate()
+    burn_rate = calculate_burn_rate()
+    adaptive_config = detect_adaptive_thinking()
+    session_pct = rate_limits.get("session", {}).get("percentUsed", 0)
+    dumbness = compute_dumbness_score(service_status, session_pct, error_rate, adaptive_config)
+
     # Today's summary
     today_total_input = 0
     today_total_output = 0
@@ -665,6 +809,10 @@ def build_widget_data():
         "trend7d": trend_7d,
         "lifetime": lifetime,
         "serviceStatus": service_status,
+        "errorRate": error_rate,
+        "burnRate": burn_rate,
+        "adaptiveThinking": adaptive_config,
+        "dumbness": dumbness,
     }
 
     return widget_data

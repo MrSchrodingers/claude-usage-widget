@@ -1,0 +1,49 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<!-- Burrinho pixel art - "dumb" state: confused donkey with spiral eyes -->
+<style>
+  .body { fill: #8B7355; }
+  .dark { fill: #5C4A32; }
+  .belly { fill: #B8A88A; }
+  .eye { fill: #FF6B6B; }
+  .nose { fill: #4A3728; }
+</style>
+<!-- Ears -->
+<rect class="dark" x="5" y="1" width="2" height="4"/>
+<rect class="dark" x="9" y="1" width="2" height="4"/>
+<rect class="body" x="6" y="2" width="1" height="2"/>
+<rect class="body" x="10" y="2" width="1" height="2"/>
+<!-- Head -->
+<rect class="body" x="4" y="5" width="8" height="6"/>
+<rect class="dark" x="3" y="6" width="1" height="4"/>
+<rect class="dark" x="12" y="6" width="1" height="4"/>
+<!-- Spiral eyes (confused) -->
+<rect class="eye" x="5" y="6" width="2" height="2"/>
+<rect class="eye" x="9" y="6" width="2" height="2"/>
+<rect x="6" y="7" width="1" height="1" fill="#FFD93D"/>
+<rect x="9" y="7" width="1" height="1" fill="#FFD93D"/>
+<!-- Snout -->
+<rect class="belly" x="5" y="9" width="6" height="2"/>
+<rect class="nose" x="6" y="9" width="1" height="1"/>
+<rect class="nose" x="9" y="9" width="1" height="1"/>
+<!-- Body -->
+<rect class="body" x="3" y="11" width="12" height="6"/>
+<rect class="belly" x="5" y="13" width="8" height="3"/>
+<rect class="dark" x="2" y="12" width="1" height="4"/>
+<rect class="dark" x="15" y="12" width="1" height="4"/>
+<!-- Legs -->
+<rect class="dark" x="4" y="17" width="2" height="4"/>
+<rect class="dark" x="10" y="17" width="2" height="4"/>
+<!-- Hooves -->
+<rect x="4" y="21" width="2" height="2" fill="#3D2B1F"/>
+<rect x="10" y="21" width="2" height="2" fill="#3D2B1F"/>
+<!-- Tail -->
+<rect class="dark" x="15" y="11" width="1" height="2"/>
+<rect class="dark" x="16" y="12" width="2" height="1"/>
+<!-- Sweat drops (confused) -->
+<rect x="1" y="5" width="1" height="2" fill="#60A5FA"/>
+<rect x="14" y="4" width="1" height="2" fill="#60A5FA"/>
+<!-- Stars around head (dizzy) -->
+<rect x="2" y="3" width="1" height="1" fill="#FFD93D"/>
+<rect x="13" y="2" width="1" height="1" fill="#FFD93D"/>
+<rect x="15" y="5" width="1" height="1" fill="#FFD93D"/>
+</svg>
