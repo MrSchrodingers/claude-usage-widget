@@ -18,7 +18,18 @@ PlasmoidItem {
     }
     property int dumbScore: usageData.dumbness?.score ?? 0
     property string dumbLevel: usageData.dumbness?.level ?? "genius"
-    property bool isDumb: dumbScore >= 25
+    // 5-state mascot flags
+    property bool isGenius: dumbLevel === "genius"
+    property bool isSmart: dumbLevel === "smart"
+    property bool isSlow: dumbLevel === "slow"
+    property bool isDumb: dumbLevel === "dumb"
+    property bool isBraindead: dumbLevel === "braindead"
+    property bool isHealthy: isGenius || isSmart
+    property bool isDegraded: isSlow || isDumb || isBraindead
+
+    // Live countdown
+    property int countdownMinutes: usageData.rateLimits?.session?.resetsInMinutes ?? 0
+    property int countdownSeconds: 0
 
     readonly property int refreshInterval: 30000
 
@@ -61,10 +72,33 @@ PlasmoidItem {
         }
         onNewData: function(source, data) {
             if (data["exit code"] === 0 && data.stdout) {
-                try { root.usageData = JSON.parse(data.stdout.trim()); } catch(e) {}
+                try {
+                    root.usageData = JSON.parse(data.stdout.trim());
+                    root.countdownMinutes = root.usageData.rateLimits?.session?.resetsInMinutes ?? 0;
+                    root.countdownSeconds = 0;
+                } catch(e) {}
             }
             disconnectSource(source);
         }
+    }
+
+    // Live countdown (ticks every second)
+    Timer {
+        interval: 1000
+        running: root.countdownMinutes > 0 || root.countdownSeconds > 0
+        repeat: true
+        onTriggered: {
+            if (root.countdownSeconds > 0) root.countdownSeconds--;
+            else if (root.countdownMinutes > 0) { root.countdownMinutes--; root.countdownSeconds = 59; }
+        }
+    }
+
+    // Clipboard helper
+    P5Support.DataSource {
+        id: clipHelper
+        engine: "executable"
+        connectedSources: []
+        onNewData: function(source, data) { disconnectSource(source); }
     }
 
     // ─── Helpers ───
@@ -217,50 +251,122 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
 
-                // Clawd mascot — sun in corner when healthy, fire behind when dumb
+                // Clawd mascot — 5 animated states + easter egg
                 Item {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.huge
                     Layout.preferredHeight: Kirigami.Units.iconSizes.huge
 
-                    // Fire sprite behind Clawd (dumb mode)
-                    Image {
-                        id: fireSprite
-                        visible: root.isDumb
-                        anchors.fill: parent
-                        property int frame: 0
-                        source: Qt.resolvedUrl("../icons/fire-" + frame + ".png")
-                        sourceSize: Qt.size(parent.width, parent.height)
-                        fillMode: Image.PreserveAspectFit
-                        smooth: false
-                        Timer {
-                            running: root.isDumb
-                            interval: 120; repeat: true
-                            onTriggered: fireSprite.frame = (fireSprite.frame + 1) % 6
-                        }
+                    // Easter egg: tap Clawd 5x fast to cycle states
+                    property int tapCount: 0
+                    property var eggStates: ["genius", "smart", "slow", "dumb", "braindead", "live"]
+                    property int eggIndex: 0
+                    property bool eggActive: false
+
+                    Timer {
+                        id: tapReset; interval: 1500; onTriggered: parent.tapCount = 0
+                    }
+                    Timer {
+                        id: eggTimeout; interval: 30000
+                        onTriggered: { parent.eggActive = false; parent.eggIndex = 0; eggLabel.visible = false }
                     }
 
-                    // Clawd
-                    Image {
+                    MouseArea {
                         anchors.fill: parent
+                        onClicked: {
+                            parent.tapCount++
+                            tapReset.restart()
+                            if (parent.tapCount >= 5) {
+                                parent.tapCount = 0
+                                parent.eggIndex = (parent.eggIndex + 1) % parent.eggStates.length
+                                var state = parent.eggStates[parent.eggIndex]
+                                if (state === "live") {
+                                    parent.eggActive = false
+                                    eggLabel.text = "🔴 Live"
+                                } else {
+                                    parent.eggActive = true
+                                    root.dumbLevel = state
+                                    root.dumbScore = state === "genius" ? 5 : state === "smart" ? 15 : state === "slow" ? 35 : state === "dumb" ? 60 : 85
+                                    eggLabel.text = "🥚 " + state.charAt(0).toUpperCase() + state.slice(1)
+                                }
+                                eggLabel.visible = true; eggHide.restart()
+                                eggTimeout.restart()
+                            }
+                        }
+                    }
+                    PlasmaComponents3.Label {
+                        id: eggLabel; visible: false
+                        anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottomMargin: -2
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.6
+                        opacity: 0.7
+                    }
+                    Timer { id: eggHide; interval: 1500; onTriggered: eggLabel.visible = false }
+
+                    // Clawd — hidden when braindead (ghost replaces him)
+                    Image {
+                        visible: !root.isBraindead
+                        anchors.centerIn: parent
+                        anchors.verticalCenterOffset: 6
+                        width: parent.width * 0.7
+                        height: parent.height * 0.7
                         source: Qt.resolvedUrl("../icons/clawd.svg")
                         sourceSize: Qt.size(parent.width, parent.height)
                         fillMode: Image.PreserveAspectFit
                     }
-
-                    // Sunglasses on Clawd (healthy only)
+                    // === ALL OVERLAYS ON TOP OF CLAWD ===
+                    // DUMB: Fire
                     Image {
-                        visible: !root.isDumb
-                        anchors.fill: parent
-                        source: Qt.resolvedUrl("../icons/sunglasses.png")
+                        id: fireSprite; visible: root.isDumb
+                        anchors.fill: parent; property int frame: 0
+                        source: Qt.resolvedUrl("../icons/fire-" + frame + ".png")
                         sourceSize: Qt.size(parent.width, parent.height)
-                        fillMode: Image.PreserveAspectFit
-                        smooth: false
+                        fillMode: Image.PreserveAspectFit; smooth: false
+                        Timer { running: root.isDumb; interval: 120; repeat: true
+                            onTriggered: fireSprite.frame = (fireSprite.frame + 1) % 6 }
                     }
-
-                    // Small sun in top-right corner (healthy only)
+                    // GENIUS: Crown sparkles
                     Image {
-                        id: sunCorner
-                        visible: !root.isDumb
+                        id: haloSprite; visible: root.isGenius
+                        anchors.fill: parent; property int frame: 0
+                        source: Qt.resolvedUrl("../icons/halo-" + frame + ".png")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit; smooth: false
+                        Timer { running: root.isGenius; interval: 250; repeat: true
+                            onTriggered: haloSprite.frame = (haloSprite.frame + 1) % 6 }
+                    }
+                    // SLOW: Rain cloud full size over smaller Clawd
+                    Image {
+                        id: rainSprite; visible: root.isSlow
+                        anchors.fill: parent; property int frame: 0
+                        source: Qt.resolvedUrl("../icons/rain-" + frame + ".png")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit; smooth: false
+                        Timer { running: root.isSlow; interval: 100; repeat: true
+                            onTriggered: rainSprite.frame = (rainSprite.frame + 1) % 6 }
+                    }
+                    // BRAINDEAD: Skull + smoke full size over smaller Clawd
+                    Image {
+                        id: skullSprite; visible: root.isBraindead
+                        anchors.fill: parent; property int frame: 0
+                        source: Qt.resolvedUrl("../icons/skull-" + frame + ".png")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit; smooth: false
+                        Timer { running: root.isBraindead; interval: 200; repeat: true
+                            onTriggered: skullSprite.frame = (skullSprite.frame + 1) % 6 }
+                    }
+                    // SMART: Book + coffee overlay
+                    Image {
+                        id: smartSprite; visible: root.isSmart
+                        anchors.fill: parent; property int frame: 0
+                        source: Qt.resolvedUrl("../icons/smart-" + frame + ".png")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit; smooth: false
+                        Timer { running: root.isSmart; interval: 300; repeat: true
+                            onTriggered: smartSprite.frame = (smartSprite.frame + 1) % 6 }
+                    }
+                    // GENIUS: Sun corner (removed sunglasses)
+                    Image {
+                        id: sunCorner; visible: false  // disabled — crown is enough
                         anchors.top: parent.top
                         anchors.right: parent.right
                         anchors.topMargin: -4
@@ -273,7 +379,7 @@ PlasmoidItem {
                         fillMode: Image.PreserveAspectFit
                         smooth: false
                         Timer {
-                            running: !root.isDumb
+                            running: root.isGenius
                             interval: 200; repeat: true
                             onTriggered: sunCorner.frame = (sunCorner.frame + 1) % 6
                         }
@@ -282,10 +388,44 @@ PlasmoidItem {
 
                 ColumnLayout {
                     spacing: 1
-                    PlasmaComponents3.Label {
-                        text: "Claude"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
-                        font.weight: Font.Bold
+                    RowLayout {
+                        spacing: 6
+                        PlasmaComponents3.Label {
+                            text: "Claude"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
+                            font.weight: Font.Bold
+                        }
+                        Rectangle {
+                            visible: root.hasData
+                            radius: height / 2
+                            color: {
+                                var c = statusColor(root.usageData.serviceStatus?.indicator ?? "none");
+                                return Qt.rgba(c.r, c.g, c.b, 0.18);
+                            }
+                            implicitWidth: _stateLbl.implicitWidth + 10
+                            implicitHeight: _stateLbl.implicitHeight + 4
+                            PlasmaComponents3.Label {
+                                id: _stateLbl; anchors.centerIn: parent
+                                text: {
+                                    var l = root.dumbLevel;
+                                    if (l === "genius") return "Genius";
+                                    if (l === "slow") return "Slow";
+                                    if (l === "dumb") return "Dumb";
+                                    if (l === "braindead") return "Braindead";
+                                    return "Smart";
+                                }
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.0
+                                font.weight: Font.Bold
+                                color: {
+                                    var l = root.dumbLevel;
+                                    if (l === "genius") return "#FFD700";
+                                    if (l === "slow") return root.claudeAmberLight;
+                                    if (l === "dumb") return "#F97316";
+                                    if (l === "braindead") return root.redAlert;
+                                    return root.greenAccent;
+                                }
+                            }
+                        }
                     }
                     RowLayout {
                         spacing: Kirigami.Units.smallSpacing
@@ -312,7 +452,7 @@ PlasmoidItem {
                                 var src = root.usageData.rateLimits?.source ?? "";
                                 return src === "api" ? "Live" : "Offline";
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
                             color: root.usageData.rateLimits?.source === "api" ? root.greenAccent : Kirigami.Theme.textColor
                             opacity: 0.6
                         }
@@ -360,46 +500,81 @@ PlasmoidItem {
                         }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
-                            property int mins: root.usageData.rateLimits?.session?.resetsInMinutes ?? 0
-                            text: mins > 60 ? "Resets in " + Math.floor(mins/60) + "h " + (mins%60) + "m"
-                                 : mins > 0 ? "Resets in " + mins + "m" : "Rolling 5h"
+                            text: {
+                                var m = root.countdownMinutes;
+                                var s = root.countdownSeconds;
+                                if (m > 60) return "Resets in " + Math.floor(m/60) + "h " + (m%60) + "m";
+                                if (m > 0) return "Resets in " + m + "m " + s + "s";
+                                if (s > 0) return "Resets in " + s + "s";
+                                return "Rolling 5h";
+                            }
                             font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
                             opacity: 0.4
                         }
                     }
 
-                    // Big percentage number
-                    PlasmaComponents3.Label {
-                        property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
-                        text: Math.round(pct) + "%"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 3.2
-                        font.weight: Font.Bold
-                        color: limitColor(pct)
+                    // Circular progress ring + percentage
+                    Item {
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 6
                         Layout.alignment: Qt.AlignHCenter
+
+                        Canvas {
+                            id: progressRing
+                            anchors.fill: parent
+                            property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
+                            Behavior on pct { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+                            onPctChanged: requestPaint()
+                            onWidthChanged: requestPaint()
+
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                var cx = width / 2, cy = height / 2;
+                                var r = Math.min(cx, cy) - 6;
+                                // Background ring
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                                ctx.strokeStyle = root.subtleBorder.toString();
+                                ctx.lineWidth = 8;
+                                ctx.stroke();
+                                // Progress arc
+                                var startAngle = -Math.PI / 2;
+                                var endAngle = startAngle + (2 * Math.PI * Math.min(1, pct / 100));
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, startAngle, endAngle);
+                                ctx.strokeStyle = barFill(pct, root.claudeAmber).toString();
+                                ctx.lineWidth = 8;
+                                ctx.lineCap = "round";
+                                ctx.stroke();
+                            }
+                        }
+
+                        PlasmaComponents3.Label {
+                            anchors.centerIn: parent
+                            property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
+                            Behavior on pct { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+                            text: Math.round(pct) + "%"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 2.5
+                            font.weight: Font.Bold
+                            color: limitColor(pct)
+                        }
                     }
 
-                    // Progress bar (thick, rounded)
-                    Rectangle {
+                    // Predictive limit alert
+                    PlasmaComponents3.Label {
                         Layout.fillWidth: true
-                        height: 12; radius: 6
-                        color: root.subtleBorder
-
-                        Rectangle {
-                            property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
-                            width: parent.width * Math.min(1, pct / 100)
-                            height: parent.height; radius: 6
-                            color: barFill(pct, root.claudeAmber)
-
-                            // Subtle shine effect
-                            Rectangle {
-                                anchors.top: parent.top
-                                width: parent.width; height: parent.height / 2
-                                radius: 6
-                                color: "white"; opacity: 0.08
-                            }
-
-                            Behavior on width { NumberAnimation { duration: 700; easing.type: Easing.OutCubic } }
+                        Layout.alignment: Qt.AlignHCenter
+                        visible: {
+                            var eta = root.usageData.limitEta?.minutesToLimit;
+                            return eta != null && eta < 120 && eta > 0;
                         }
+                        text: "At current rate, limit in " + (root.usageData.limitEta?.label ?? "?")
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                        font.italic: true
+                        horizontalAlignment: Text.AlignHCenter
+                        color: root.claudeAmberLight
+                        opacity: 0.7
                     }
                 }
             }
@@ -442,7 +617,7 @@ PlasmoidItem {
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklyAll?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklyAll?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.7
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
@@ -483,7 +658,7 @@ PlasmoidItem {
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklySonnet?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklySonnet?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.7
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
@@ -511,46 +686,163 @@ PlasmoidItem {
             }
 
             // ══════════════════════════════════
-            // ── Balance Card ──
+            // ── Credits & Spending Card ──
             // ══════════════════════════════════
             Rectangle {
                 Layout.fillWidth: true
                 visible: root.usageData.rateLimits?.credits != null
-                implicitHeight: balanceRow.implicitHeight + Kirigami.Units.mediumSpacing * 2
+                implicitHeight: creditsCol.implicitHeight + Kirigami.Units.mediumSpacing * 2
                 radius: 10
                 color: root.cardBg
 
-                RowLayout {
-                    id: balanceRow
+                ColumnLayout {
+                    id: creditsCol
                     anchors.fill: parent
                     anchors.margins: Kirigami.Units.mediumSpacing
-                    spacing: Kirigami.Units.smallSpacing
+                    spacing: 6
 
-                    Kirigami.Icon {
-                        source: "wallet-open"
-                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                        color: root.claudeAmber
-                        opacity: 0.6
-                    }
+                    // Header: Balance big number
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
 
-                    PlasmaComponents3.Label {
-                        text: "Balance"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
-                        opacity: 0.5
-                    }
-                    Item { Layout.fillWidth: true }
-                    PlasmaComponents3.Label {
-                        text: {
-                            var c = root.usageData.rateLimits?.credits ?? {};
-                            var amount = c.amount ?? 0;
-                            var currency = c.currency ?? "USD";
-                            if (currency === "BRL") return "R$ " + amount.toLocaleString(Qt.locale(), 'f', 2);
-                            return "$ " + amount.toLocaleString(Qt.locale(), 'f', 2);
+                        Kirigami.Icon {
+                            source: "wallet-open"
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                            color: root.claudeAmber; opacity: 0.6
                         }
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.2
-                        font.weight: Font.Bold
-                        color: root.claudeAmber
+                        PlasmaComponents3.Label {
+                            text: "Credits"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.weight: Font.DemiBold; opacity: 0.55
+                        }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            text: {
+                                var c = root.usageData.rateLimits?.credits ?? {};
+                                var amount = c.amount ?? 0;
+                                var currency = c.currency ?? "USD";
+                                if (currency === "BRL") return "R$ " + amount.toLocaleString(Qt.locale(), 'f', 2);
+                                return "$ " + amount.toLocaleString(Qt.locale(), 'f', 2);
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.3
+                            font.weight: Font.Bold
+                            color: root.claudeAmber
+                        }
+                    }
+
+                    // Auto-reload status
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        Kirigami.Icon { source: "view-refresh"; Layout.preferredWidth: 12; Layout.preferredHeight: 12; opacity: 0.4 }
+                        PlasmaComponents3.Label {
+                            text: "Auto-reload"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.5
+                        }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            property bool on: root.usageData.rateLimits?.credits?.autoReload ?? false
+                            text: on ? "ON" : "OFF"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.weight: Font.Bold
+                            color: on ? root.greenAccent : root.claudeAmberLight
+                        }
+                    }
+
+                    // ── Extra Usage section ──
+                    Rectangle {
+                        Layout.fillWidth: true; height: 1
+                        color: root.subtleBorder; opacity: 0.5
+                        visible: root.usageData.rateLimits?.extraUsage != null
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: root.usageData.rateLimits?.extraUsage != null
+                        Kirigami.Icon { source: "list-add"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label {
+                            text: "Extra Usage"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.weight: Font.DemiBold; opacity: 0.55
+                        }
+                        Item { Layout.fillWidth: true }
+                        Rectangle {
+                            property bool on: root.usageData.rateLimits?.extraUsage?.enabled ?? false
+                            radius: height / 2
+                            color: Qt.rgba(on ? root.greenAccent.r : root.redAlert.r,
+                                           on ? root.greenAccent.g : root.redAlert.g,
+                                           on ? root.greenAccent.b : root.redAlert.b, 0.18)
+                            implicitWidth: _extraLbl.implicitWidth + 12
+                            implicitHeight: _extraLbl.implicitHeight + 4
+                            PlasmaComponents3.Label {
+                                id: _extraLbl; anchors.centerIn: parent
+                                text: parent.on ? "Active" : "Disabled"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.weight: Font.Bold
+                                color: parent.on ? root.greenAccent : root.redAlert
+                            }
+                        }
+                    }
+
+                    // Extra usage: monthly limit + used
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: root.usageData.rateLimits?.extraUsage != null
+                        PlasmaComponents3.Label {
+                            text: "Monthly limit"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.5
+                        }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            text: {
+                                var e = root.usageData.rateLimits?.extraUsage ?? {};
+                                var c = e.currency ?? "USD";
+                                var amt = e.monthlyLimit ?? 0;
+                                return (c === "BRL" ? "R$ " : "$ ") + amt.toLocaleString(Qt.locale(), 'f', 2);
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.weight: Font.DemiBold
+                        }
+                    }
+
+                    // Used / remaining bar
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 3
+                        visible: root.usageData.rateLimits?.extraUsage != null
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            PlasmaComponents3.Label {
+                                text: "Used"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.5
+                            }
+                            Item { Layout.fillWidth: true }
+                            PlasmaComponents3.Label {
+                                property real used: root.usageData.rateLimits?.extraUsage?.usedCredits ?? 0
+                                property real limit: root.usageData.rateLimits?.extraUsage?.monthlyLimit ?? 1
+                                text: {
+                                    var c = root.usageData.rateLimits?.extraUsage?.currency ?? "USD";
+                                    var prefix = c === "BRL" ? "R$ " : "$ ";
+                                    return prefix + used.toLocaleString(Qt.locale(), 'f', 2) + " / " + prefix + limit.toLocaleString(Qt.locale(), 'f', 2);
+                                }
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6
+                            }
+                        }
+
+                        // Usage bar
+                        Rectangle {
+                            Layout.fillWidth: true; height: 6; radius: 3
+                            color: root.subtleBorder
+                            Rectangle {
+                                property real used: root.usageData.rateLimits?.extraUsage?.usedCredits ?? 0
+                                property real limit: root.usageData.rateLimits?.extraUsage?.monthlyLimit ?? 1
+                                width: parent.width * Math.min(1, limit > 0 ? used / limit : 0)
+                                height: parent.height; radius: 3
+                                color: (used / Math.max(1, limit)) > 0.8 ? root.redAlert : root.claudeAmber
+                                Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            }
+                        }
                     }
                 }
             }
@@ -661,7 +953,7 @@ PlasmoidItem {
                                 }
                                 PlasmaComponents3.Label {
                                     text: modelData.name ?? ""
-                                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                                     opacity: 0.55
                                 }
                             }
@@ -683,7 +975,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             text: "User reports:"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                             opacity: 0.35
                         }
 
@@ -691,7 +983,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.ToolButton {
                             text: "DownDetector ↗"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                             opacity: 0.55
                             flat: true
                             padding: 0
@@ -709,7 +1001,7 @@ PlasmoidItem {
                             PlasmaComponents3.Label {
                                 Layout.fillWidth: true
                                 text: modelData.name ?? ""
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
                                 font.weight: Font.DemiBold
                                 color: root.redAlert
                                 wrapMode: Text.WordWrap
@@ -721,7 +1013,7 @@ PlasmoidItem {
                                 Layout.fillWidth: true
                                 visible: (modelData.latest_update ?? "") !== ""
                                 text: modelData.latest_update ?? ""
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.73
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.823
                                 opacity: 0.50
                                 wrapMode: Text.WordWrap
                                 maximumLineCount: 2
@@ -764,7 +1056,8 @@ PlasmoidItem {
                                 var lvl = root.dumbLevel;
                                 if (lvl === "braindead") return "💀 Braindead";
                                 if (lvl === "dumb") return "🔥 This is Fine";
-                                if (lvl === "slow") return "🐌 Slow";
+                                if (lvl === "slow") return "🌧 Slow";
+                                if (lvl === "genius") return "✨ Genius";
                                 return "🤔 Hmm";
                             }
                             font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
@@ -788,7 +1081,7 @@ PlasmoidItem {
                                 id: _dumbLabel
                                 anchors.centerIn: parent
                                 text: root.dumbScore + "/100"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
                                 font.weight: Font.Bold
                                 color: {
                                     if (root.dumbScore >= 75) return root.redAlert;
@@ -805,7 +1098,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             Layout.fillWidth: true
                             text: "  • " + modelData
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                             opacity: 0.55
                         }
                     }
@@ -815,7 +1108,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         visible: !(root.usageData.adaptiveThinking?.adaptive_thinking ?? true)
                         text: "Tip: Adaptive Thinking is OFF in settings.json"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                         font.italic: true
                         opacity: 0.45
                         wrapMode: Text.WordWrap
@@ -932,6 +1225,70 @@ PlasmoidItem {
                             color: on ? root.greenAccent : root.redAlert
                         }
                     }
+
+                    // Avg response quality
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.responseQuality?.avgTokensPerResponse ?? 0) > 0
+                        Kirigami.Icon { source: "document-edit"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label { text: "Avg response"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            property int avg: root.usageData.responseQuality?.avgTokensPerResponse ?? 0
+                            text: root.formatTokens(avg) + " tok"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            color: avg > 500 ? root.greenAccent : avg > 200 ? root.claudeAmberLight : root.redAlert
+                        }
+                    }
+
+                    // Latency
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.latency?.avgSeconds ?? 0) > 0
+                        Kirigami.Icon { source: "chronometer"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label { text: "Avg latency"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            property real lat: root.usageData.latency?.avgSeconds ?? 0
+                            text: lat.toFixed(1) + "s"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            color: lat < 10 ? root.greenAccent : lat < 30 ? root.claudeAmberLight : root.redAlert
+                        }
+                    }
+
+                    // Model distribution bar
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.modelBreakdown ?? []).length > 0
+                        PlasmaComponents3.Label { text: "Model split"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828; opacity: 0.4 }
+                        Rectangle {
+                            Layout.fillWidth: true; height: 8; radius: 4; color: root.subtleBorder; clip: true
+                            Row {
+                                anchors.fill: parent
+                                Repeater {
+                                    model: root.usageData.modelBreakdown ?? []
+                                    Rectangle {
+                                        width: parent.width * (modelData.percentage ?? 0) / 100
+                                        height: parent.height; color: modelData.color ?? "#9CA3AF"
+                                    }
+                                }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: Kirigami.Units.smallSpacing
+                            Repeater {
+                                model: root.usageData.modelBreakdown ?? []
+                                RowLayout {
+                                    visible: (modelData.percentage ?? 0) > 0.5; spacing: 3
+                                    Rectangle { width: 6; height: 6; radius: 3; color: modelData.color ?? "#9CA3AF" }
+                                    PlasmaComponents3.Label {
+                                        text: (modelData.model ?? "") + " " + Math.round(modelData.percentage ?? 0) + "%"
+                                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8; opacity: 0.5
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -946,7 +1303,7 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     text: "claude.ai"
                     icon.name: "internet-web-browser"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
                     onClicked: Qt.openUrlExternally("https://claude.ai")
                 }
 
@@ -954,16 +1311,24 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     text: "Status"
                     icon.name: "network-connect"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
                     onClicked: Qt.openUrlExternally("https://status.claude.com")
                 }
 
                 PlasmaComponents3.Button {
                     Layout.fillWidth: true
-                    text: "DownDetector"
-                    icon.name: "globe"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
-                    onClicked: Qt.openUrlExternally("https://downdetector.com/status/claude-ai/")
+                    text: "Copy Stats"
+                    icon.name: "edit-copy"
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                    onClicked: {
+                        var s = root.usageData;
+                        var stats = "Claude " + new Date().toLocaleDateString()
+                            + " | Session: " + Math.round(s.rateLimits?.session?.percentUsed ?? 0) + "%"
+                            + " | Weekly: " + Math.round(s.rateLimits?.weeklyAll?.percentUsed ?? 0) + "%"
+                            + " | $" + (s.today?.costUSD ?? 0).toFixed(2)
+                            + " | " + root.formatTokens(s.today?.totalTokens ?? 0) + " tokens";
+                        clipHelper.connectSource("echo " + JSON.stringify(stats) + " | wl-copy 2>/dev/null || echo " + JSON.stringify(stats) + " | xclip -selection clipboard 2>/dev/null");
+                    }
                 }
             }
 
@@ -1050,6 +1415,56 @@ PlasmoidItem {
             }
 
             // ══════════════════════════════════
+            // ── Peak Hours ──
+            // ══════════════════════════════════
+            Rectangle {
+                Layout.fillWidth: true
+                visible: Object.keys(root.usageData.lifetime?.peakHours ?? {}).length > 0
+                implicitHeight: peakCol.implicitHeight + Kirigami.Units.mediumSpacing * 2
+                radius: 10; color: root.cardBg
+
+                ColumnLayout {
+                    id: peakCol
+                    anchors.fill: parent; anchors.margins: Kirigami.Units.mediumSpacing; spacing: 4
+
+                    PlasmaComponents3.Label {
+                        text: "Peak hours"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8; opacity: 0.4
+                    }
+
+                    Item {
+                        Layout.fillWidth: true; Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
+
+                        Canvas {
+                            id: peakChart; anchors.fill: parent
+                            property var peakData: root.usageData.lifetime?.peakHours ?? {}
+                            onPeakDataChanged: requestPaint()
+                            onWidthChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                var data = peakData;
+                                if (!data || Object.keys(data).length === 0) return;
+                                var vals = []; var maxV = 1;
+                                for (var h = 0; h < 24; h++) { var v = data[h.toString()] || 0; vals.push(v); if (v > maxV) maxV = v; }
+                                var bw = (width - 4) / 24; var ch = height - 12;
+                                for (var i = 0; i < 24; i++) {
+                                    var x = 2 + i * bw + 1; var barH = Math.max(1, (vals[i] / maxV) * ch); var y = ch - barH; var w = bw - 2;
+                                    var alpha = vals[i] > 0 ? 0.3 + (vals[i] / maxV) * 0.5 : 0.08;
+                                    ctx.fillStyle = (i >= 9 && i <= 18) ? Qt.rgba(0.851, 0.467, 0.024, alpha) : Qt.rgba(0.231, 0.510, 0.965, alpha);
+                                    ctx.fillRect(x, y, w, barH);
+                                    if (i % 6 === 0) {
+                                        ctx.fillStyle = Kirigami.Theme.textColor.toString(); ctx.globalAlpha = 0.3;
+                                        ctx.font = "7px sans-serif"; ctx.textAlign = "center";
+                                        ctx.fillText(i + "h", x + w / 2, height - 1); ctx.globalAlpha = 1.0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ══════════════════════════════════
             // ── Footer ──
             // ══════════════════════════════════
             RowLayout {
@@ -1067,7 +1482,7 @@ PlasmoidItem {
 
                 PlasmaComponents3.Label {
                     text: (root.usageData.lifetime?.totalSessions ?? 0) + " sessions"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
                     opacity: 0.3
                 }
 
@@ -1079,15 +1494,41 @@ PlasmoidItem {
                         if (!s) return "";
                         return "since " + new Date(s).toLocaleDateString(Qt.locale(), "MMM yyyy");
                     }
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.75
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
                     opacity: 0.3
+                }
+
+                // Streak badge
+                Rectangle {
+                    visible: (root.usageData.streak?.days ?? 0) > 1
+                    radius: height / 2
+                    color: Qt.rgba(root.claudeAmber.r, root.claudeAmber.g, root.claudeAmber.b, 0.15)
+                    implicitWidth: _streakLbl.implicitWidth + 10
+                    implicitHeight: _streakLbl.implicitHeight + 4
+                    PlasmaComponents3.Label {
+                        id: _streakLbl; anchors.centerIn: parent
+                        text: (root.usageData.streak?.days ?? 0) + "d streak"
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                        font.weight: Font.Bold; color: root.claudeAmber
+                    }
                 }
 
                 Item { Layout.fillWidth: true }
 
+                // Version
+                PlasmaComponents3.Label {
+                    visible: (root.usageData.claudeCodeVersion ?? "") !== ""
+                    text: root.usageData.claudeCodeVersion ?? ""
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                    opacity: 0.2
+                }
+
+                Rectangle { width: 3; height: 3; radius: 1.5; color: Kirigami.Theme.textColor; opacity: 0.15;
+                    visible: (root.usageData.claudeCodeVersion ?? "") !== "" }
+
                 PlasmaComponents3.Label {
                     text: "Anthropic"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.7
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
                     font.weight: Font.DemiBold
                     opacity: 0.2
                 }

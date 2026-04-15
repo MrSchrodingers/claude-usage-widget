@@ -336,6 +336,28 @@ def fetch_credits_from_api():
     return _api_request("prepaid/credits")
 
 
+def fetch_overage_data():
+    """Fetch extra usage (overage) spend limit and credit grant."""
+    spend_limit = _api_request("overage_spend_limit")
+    credit_grant = _api_request("overage_credit_grant")
+    if not spend_limit and not credit_grant:
+        return None
+    result = {}
+    if spend_limit:
+        currency = spend_limit.get("currency", "USD")
+        result["enabled"] = spend_limit.get("is_enabled", False)
+        result["monthlyLimit"] = spend_limit.get("monthly_credit_limit", 0) / 100
+        result["usedCredits"] = spend_limit.get("used_credits", 0) / 100
+        result["currency"] = currency
+        result["disabledReason"] = spend_limit.get("disabled_reason", "")
+        result["outOfCredits"] = spend_limit.get("out_of_credits", False)
+    if credit_grant:
+        result["grantAvailable"] = credit_grant.get("available", False)
+        result["grantAmount"] = credit_grant.get("amount_minor_units", 0) / 100
+        result["grantCurrency"] = credit_grant.get("currency", "USD")
+    return result
+
+
 def fetch_service_status():
     """Fetch Claude service health from status.claude.com (Statuspage.io API)."""
     try:
@@ -544,11 +566,11 @@ def compute_dumbness_score(service_status, session_pct, error_rate, adaptive_con
     elif total_err > 0:
         score += 5
 
-    # Adaptive thinking / context config (0-15 pts)
-    if not adaptive_config.get("adaptive_thinking", True):
-        score += 10; reasons.append("Adaptive thinking OFF")
+    # Adaptive thinking: ON is worse (causes lazy responses)
+    if adaptive_config.get("adaptive_thinking", True):
+        score += 8; reasons.append("Adaptive thinking ON (lazy responses)")
     if not adaptive_config.get("context_1m", True):
-        score += 5; reasons.append("1M context OFF")
+        score += 3; reasons.append("1M context OFF")
 
     score = min(100, score)
     if score < 10:
@@ -563,6 +585,121 @@ def compute_dumbness_score(service_status, session_pct, error_rate, adaptive_con
         level = "braindead"
 
     return {"score": score, "level": level, "reasons": reasons}
+
+
+def calculate_latency(hours=2):
+    """Average response latency (seconds) from user→assistant timestamp gaps."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    mtime_cutoff = (cutoff - timedelta(hours=1)).timestamp()
+    gaps = []
+
+    projects_dir = CLAUDE_DIR / "projects"
+    if not projects_dir.exists():
+        return {"avgSeconds": 0, "sampleSize": 0}
+
+    for jsonl_file in projects_dir.rglob("*.jsonl"):
+        if "subagents" in str(jsonl_file):
+            continue
+        try:
+            if jsonl_file.stat().st_mtime < mtime_cutoff:
+                continue
+        except OSError:
+            continue
+        try:
+            last_user_ts = None
+            with open(jsonl_file) as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = record.get("timestamp")
+                    rec_date = parse_timestamp(ts) if ts else None
+                    if not rec_date or rec_date < cutoff:
+                        last_user_ts = None
+                        continue
+                    role = record.get("message", {}).get("role", "") or record.get("type", "")
+                    if role == "user":
+                        last_user_ts = rec_date
+                    elif role == "assistant" and last_user_ts:
+                        delta = (rec_date - last_user_ts).total_seconds()
+                        if 0.5 < delta < 300:  # reasonable range
+                            gaps.append(delta)
+                        last_user_ts = None
+                    if len(gaps) >= 50:
+                        break
+        except (PermissionError, OSError):
+            continue
+        if len(gaps) >= 50:
+            break
+
+    avg = round(sum(gaps) / len(gaps), 1) if gaps else 0
+    return {"avgSeconds": avg, "sampleSize": len(gaps)}
+
+
+def calculate_streak():
+    """Count consecutive days with Claude usage ending today."""
+    stats = load_stats_cache()
+    active_dates = set()
+    if stats:
+        for d in stats.get("dailyActivity", []):
+            if d.get("sessionCount", 0) > 0:
+                active_dates.add(d["date"])
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    # Today might not be in stats-cache yet, check if we have sessions
+    # (caller will pass today_has_sessions flag)
+    return active_dates, today
+
+
+def _compute_streak(active_dates, today, today_has_sessions):
+    """Walk backwards counting consecutive active days."""
+    if today_has_sessions:
+        active_dates.add(today)
+    streak = 0
+    d = datetime.now()
+    for _ in range(365):
+        date_str = d.strftime("%Y-%m-%d")
+        if date_str in active_dates:
+            streak += 1
+        else:
+            break
+        d -= timedelta(days=1)
+    return {"days": streak, "includesToday": today_has_sessions}
+
+
+def predict_limit_eta(session_pct, reset_minutes):
+    """Predict when session limit will hit 100% at current rate."""
+    if session_pct <= 0 or session_pct >= 100:
+        return None
+    elapsed = (5 * 60) - reset_minutes  # minutes into the 5h window
+    if elapsed <= 5:
+        return None  # not enough data
+    rate_per_min = session_pct / elapsed
+    if rate_per_min <= 0:
+        return None
+    minutes_to_100 = int((100 - session_pct) / rate_per_min)
+    if minutes_to_100 > 600:
+        return None  # too far away to be useful
+    if minutes_to_100 >= 60:
+        label = f"~{minutes_to_100 // 60}h {minutes_to_100 % 60}m"
+    else:
+        label = f"~{minutes_to_100}m"
+    return {"minutesToLimit": minutes_to_100, "label": label}
+
+
+def get_claude_code_version():
+    """Get installed Claude Code version."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(["claude", "--version"], capture_output=True, text=True, timeout=3)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().split("\n")[0].strip()
+    except Exception:
+        pass
+    return ""
 
 
 def build_rate_limits():
@@ -630,14 +767,24 @@ def build_rate_limits():
             "source": "api",
         }
 
-        # Add credits info
+        # Add credits info (full details)
         if credits_data:
             amount = credits_data.get("amount", 0)
             currency = credits_data.get("currency", "USD")
+            auto_reload = credits_data.get("auto_reload_settings")
+            pending = credits_data.get("pending_invoice_amount_cents")
             result["credits"] = {
-                "amount": amount / 100 if currency else amount,  # cents to currency
+                "amount": amount / 100,
                 "currency": currency,
+                "autoReload": auto_reload is not None,
+                "autoReloadSettings": auto_reload,
+                "pendingInvoice": (pending / 100) if pending else 0,
             }
+
+        # Extra usage / overage
+        overage = fetch_overage_data()
+        if overage:
+            result["extraUsage"] = overage
 
         return result
 
@@ -695,7 +842,12 @@ def build_widget_data():
     burn_rate = calculate_burn_rate()
     adaptive_config = detect_adaptive_thinking()
     session_pct = rate_limits.get("session", {}).get("percentUsed", 0)
+    reset_mins = rate_limits.get("session", {}).get("resetsInMinutes", 0)
     dumbness = compute_dumbness_score(service_status, session_pct, error_rate, adaptive_config)
+    latency = calculate_latency()
+    active_dates, today_str = calculate_streak()
+    limit_eta = predict_limit_eta(session_pct, reset_mins)
+    cc_version = get_claude_code_version()
 
     # Today's summary
     today_total_input = 0
@@ -813,14 +965,43 @@ def build_widget_data():
         "burnRate": burn_rate,
         "adaptiveThinking": adaptive_config,
         "dumbness": dumbness,
+        "latency": latency,
+        "responseQuality": {
+            "avgTokensPerResponse": round(today_total_output / today_msg_count) if today_msg_count > 0 else 0,
+            "totalResponses": today_msg_count,
+        },
+        "streak": _compute_streak(active_dates, today_str, len(today_sessions) > 0),
+        "limitEta": limit_eta,
+        "claudeCodeVersion": cc_version,
     }
 
     return widget_data
 
 
+TEST_STATES = {
+    "genius":    {"score": 5,  "level": "genius",    "reasons": []},
+    "smart":     {"score": 15, "level": "smart",     "reasons": ["Adaptive thinking OFF"]},
+    "slow":      {"score": 35, "level": "slow",      "reasons": ["Degraded service", "3 errors/2h"]},
+    "dumb":      {"score": 60, "level": "dumb",      "reasons": ["Degraded service", "Session >80%", "5 errors/2h"]},
+    "braindead": {"score": 85, "level": "braindead",  "reasons": ["Critical outage", "Session >90%", "12 errors/2h", "Adaptive thinking OFF"]},
+}
+
+
 def main():
     try:
         data = build_widget_data()
+
+        # --test-state override for HITL testing
+        for arg in sys.argv:
+            if arg.startswith("--test-state="):
+                state = arg.split("=", 1)[1]
+                if state in TEST_STATES:
+                    data["dumbness"] = TEST_STATES[state]
+                    if state in ("slow", "dumb", "braindead"):
+                        data["serviceStatus"]["indicator"] = "minor" if state == "slow" else "major"
+                        data["rateLimits"]["session"]["percentUsed"] = 65 if state == "slow" else 84 if state == "dumb" else 95
+                        data["errorRate"]["total"] = 3 if state == "slow" else 5 if state == "dumb" else 12
+
         # Atomic write
         tmp_path = str(OUTPUT_FILE) + ".tmp"
         with open(tmp_path, "w") as f:
@@ -832,7 +1013,11 @@ def main():
             cost = data["today"]["costUSD"]
             tokens = data["today"]["totalTokens"]
             sessions = data["today"]["sessions"]
-            print(f"OK: ${cost:.2f} | {tokens:,} tokens | {sessions} sessions")
+            state_str = ""
+            for arg in sys.argv:
+                if arg.startswith("--test-state="):
+                    state_str = f" [SIM: {arg.split('=')[1]}]"
+            print(f"OK: ${cost:.2f} | {tokens:,} tokens | {sessions} sessions{state_str}")
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)

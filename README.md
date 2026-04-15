@@ -1,95 +1,107 @@
-# Claude Usage Monitor — KDE Plasma 6 Widget
+<div align="center">
 
-A KDE Plasma 6 panel widget that shows your **Claude AI usage limits**, **service health**, **intelligence score**, and **weekly quotas** in real-time — directly in your taskbar.
+# Claude Usage Monitor
 
-<p align="center">
-  <img src="screenshots/widget.gif" alt="Claude Usage Widget popup" width="427"/>
-</p>
+### KDE Plasma 6 Widget
 
-<p align="center">
-  <img src="screenshots/panel.png" alt="Claude panel compact view"/>
-</p>
+**Real-time Claude AI usage limits, service health, intelligence score, and spending tracker directly in your taskbar.**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![KDE Plasma 6](https://img.shields.io/badge/KDE_Plasma-6.0+-blue.svg)](https://kde.org/plasma-desktop/)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green.svg)](https://python.org)
+[![Claude API](https://img.shields.io/badge/Claude-API-D97757.svg)](https://claude.ai)
+
+<br>
+
+<img src="screenshots/widget.gif" alt="Claude Usage Widget" width="427"/>
+
+<br>
+
+<img src="screenshots/panel.png" alt="Panel compact view"/>
+
+</div>
 
 ---
 
-## Features
+## Highlights
+
+<table>
+<tr>
+<td width="50%">
 
 ### Usage Monitoring
-- **Session limit** — live 5-hour usage % with reset countdown
-- **Weekly limits** — all models + Sonnet-only with reset dates
-- **Prepaid balance** — current credits in your currency (BRL, USD, etc.)
-- **7-day activity chart** — local token usage trend from Claude Code
+- Circular progress ring with live countdown (seconds)
+- Session, weekly all-models, and weekly Sonnet limits
+- Prepaid credits balance with auto-reload status
+- Extra Usage: enabled/disabled, monthly limit, used/remaining
 
-### Intelligence & Health
-- **Dumbness Score** — composite 0-100 score that detects when Claude is performing poorly
-- **Burrinho mascot** — pixel art donkey replaces Clawd when Claude is "dumb" (wobble animation)
-- **Service health** — real-time from [status.claude.com](https://status.claude.com): Healthy / Degraded / Major Outage / Critical
-- **Active incidents** — incident name and latest update from Anthropic
-- **KDE notifications** — desktop alert via `notify-send` on status changes
+</td>
+<td width="50%">
+
+### Intelligence Score
+- Composite 0-100 "Dumbness Score" detects degradation
+- 5 animated pixel art mascot states
+- Factors: service health, rate limits, API errors, config
+- Predictive alert: "limit in ~Xh at current rate"
+
+</td>
+</tr>
+<tr>
+<td>
+
+### Service Health
+- Real-time from status.claude.com (Statuspage API)
+- Component status: claude.ai, Platform, API, Claude Code
+- Active incident details with latest update text
+- KDE desktop notifications on status changes
+
+</td>
+<td>
 
 ### Performance Metrics
-- **Burn rate** — tokens/hour consumption rate (rolling 2h window)
-- **Error tracking** — counts 429/529/overloaded errors from local JSONL files (rolling 2h)
-- **Adaptive Thinking detection** — reads `~/.claude/settings.json` and warns if disabled
+- Token burn rate (output tokens/hour)
+- API error tracking (429/529/overloaded in 2h window)
+- Average response quality (tokens per response)
+- Average latency (user-to-assistant response time)
+- Model distribution bar (Opus/Sonnet/Haiku split)
 
-### Quick Actions
-- **claude.ai** — open Claude in browser
-- **Status** — open status.claude.com
-- **DownDetector** — crowd-sourced early warnings
-
-### General
-- **Auto-refresh** every 30 seconds via systemd timer
-- **Zero API keys** — authenticates via your browser session cookies
-- **Auto-detection** — org_id detected from cookies on first run
+</td>
+</tr>
+</table>
 
 ---
 
-## Dumbness Score
+## Mascot States
 
-The widget computes a composite intelligence score that tells you when Claude is likely to give poor results:
+The Clawd mascot changes based on Claude's performance score:
 
-| Factor | Points | Trigger |
-|--------|--------|---------|
-| Service health | 0-40 | Critical=40, Major=30, Degraded=15 |
-| Session utilization | 0-25 | >90%=25, >80%=15, >60%=5 |
-| API errors (2h) | 0-20 | >10 errors=20, >3=10, >0=5 |
-| Adaptive Thinking OFF | 10 | Detected in `settings.json` |
-| 1M Context OFF | 5 | Detected in `settings.json` |
+| Score | Level | Mascot | Trigger |
+|:-----:|:-----:|:------:|:--------|
+| 0-9 | **Genius** | Crown + sparkles | Everything perfect |
+| 10-24 | **Smart** | Coffee cup + steam | Minor config issues |
+| 25-49 | **Slow** | Rain cloud + drops | Service degraded |
+| 50-74 | **Dumb** | Fire flames | Major issues + rate limit pressure |
+| 75-100 | **Braindead** | Tombstone + ghost Clawd | Critical outage |
 
-**Levels:**
+### Dumbness Score Factors
 
-| Score | Level | Mascot |
-|-------|-------|--------|
-| 0-9 | Genius | Clawd (normal) |
-| 10-24 | Smart | Clawd (normal) |
-| 25-49 | Slow | Burrinho (wobble) |
-| 50-74 | Dumb | Burrinho (wobble) |
-| 75-100 | Braindead | Burrinho (wobble) |
+| Factor | Points | Source |
+|--------|:------:|--------|
+| Service health | 0-40 | status.claude.com |
+| Session utilization | 0-25 | claude.ai API |
+| API errors (2h window) | 0-20 | Local JSONL files |
+| Adaptive Thinking ON | 8 | ~/.claude/settings.json |
+| 1M Context OFF | 3 | ~/.claude/settings.json |
 
-When the score reaches 25+, the Clawd mascot is replaced by an animated pixel art donkey ("burrinho").
-
-### Adaptive Thinking Workaround
-
-If Claude Code feels "lazy" or gives shallow answers, you may want to disable Adaptive Thinking. Add to `~/.claude/settings.json`:
-
-```json
-{
-  "effortLevel": "high",
-  "env": {
-    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1"
-  }
-}
-```
-
-This forces full reasoning on every turn. Trade-off: consumes rate limit faster.
+> **Why is Adaptive Thinking ON a penalty?** With Adaptive Thinking enabled, Claude sometimes allocates zero reasoning tokens on complex tasks, causing lazy/shallow responses. [Learn more](https://dev.to/shuicici/claude-codes-feb-mar-2026-updates-quietly-broke-complex-engineering-heres-the-technical-5b4h)
 
 ---
 
 ## Requirements
 
 - **KDE Plasma 6** (Fedora 40+, Kubuntu 24.04+, Arch, etc.)
-- **Python 3.8+**
-- **Firefox or Chromium** — logged in to [claude.ai](https://claude.ai)
+- **Python 3.8+** with Pillow (`pip install pillow`)
+- **Firefox or Chromium** logged in to [claude.ai](https://claude.ai)
 - **Claude Code** installed (for local activity data)
 
 ---
@@ -126,22 +138,28 @@ The installer will:
 Browser cookies (Firefox/Chromium)
         |
         v
-claude-usage-collector.py
+claude-usage-collector.py (every 30s)
         |
-        |--- claude.ai/api/organizations/{org}/usage
-        |       { five_hour, seven_day, seven_day_sonnet utilization }
+        |--- claude.ai/api/.../usage
+        |       Session %, weekly limits, reset timers
         |
-        |--- claude.ai/api/organizations/{org}/prepaid/credits
-        |       { amount, currency }
+        |--- claude.ai/api/.../prepaid/credits
+        |       Balance, currency, auto-reload
+        |
+        |--- claude.ai/api/.../overage_spend_limit
+        |       Extra usage: enabled, limit, used
+        |
+        |--- claude.ai/api/.../overage_credit_grant
+        |       Credit grant status
         |
         |--- status.claude.com/api/v2/summary.json
-        |       { indicator, components[], active_incidents[] }
+        |       Service health, components, incidents
         |
         |--- ~/.claude/settings.json
-        |       { effortLevel, DISABLE_ADAPTIVE_THINKING }
+        |       Adaptive thinking, effort level
         |
         |--- ~/.claude/projects/**/*.jsonl
-        |       { errors, tokens, sessions, models }
+        |       Errors, tokens, latency, sessions
         |
         v
 ~/.claude/widget-data.json ---> Plasma Widget (QML)
@@ -149,44 +167,86 @@ claude-usage-collector.py
 
 ### Authentication
 
-The widget reads session cookies from your browser — no API keys or passwords stored.
+The widget reads session cookies from your browser. No API keys or passwords stored.
 
-- **Firefox**: reads from `~/.mozilla/firefox/*/cookies.sqlite`
-- **Chromium/Chrome**: reads from `~/.config/google-chrome/Default/Cookies`
-
-You must be logged in to [claude.ai](https://claude.ai) in your browser.
+- **Firefox**: `~/.mozilla/firefox/*/cookies.sqlite`
+- **Chromium**: `~/.config/google-chrome/Default/Cookies`
 
 ### Data Sources
 
 | Data | Source | Scope |
 |------|--------|-------|
-| Session usage (%) | claude.ai API | Your entire account (all devices) |
-| Weekly limits (%) | claude.ai API | Your entire account |
-| Reset timers | claude.ai API | Your entire account |
-| Prepaid balance | claude.ai API | Your organization |
-| Service health | status.claude.com | Anthropic infrastructure |
-| Active incidents | status.claude.com | Anthropic infrastructure |
-| Error rate | Local JSONL files | This machine only |
-| Burn rate | Local JSONL files | This machine only |
-| Adaptive Thinking | Local settings.json | This machine only |
-| Dumbness score | Composite (all above) | Combined |
-| 7-day activity chart | Local JSONL files | This machine only |
-| Lifetime stats | Local stats-cache | This machine only |
+| Session/weekly usage | claude.ai API | All devices |
+| Reset timers | claude.ai API | All devices |
+| Prepaid credits | claude.ai API | Organization |
+| Extra usage limits | claude.ai API | Organization |
+| Service health | status.claude.com | Anthropic infra |
+| Error rate | Local JSONL | This machine |
+| Burn rate | Local JSONL | This machine |
+| Avg response/latency | Local JSONL | This machine |
+| Adaptive Thinking | Local settings | This machine |
+| Dumbness score | Composite | Combined |
+| 7-day chart | Local JSONL | This machine |
+| Peak hours | Local stats-cache | This machine |
 
-### Service Health
+---
 
-The widget polls `https://status.claude.com/api/v2/summary.json` every 30 seconds:
+## Features
 
-| Indicator | Label | Color |
-|-----------|-------|-------|
-| `none` | Healthy | Green |
-| `minor` | Degraded | Amber |
-| `major` | Major Outage | Orange |
-| `critical` | Critical Outage | Red |
+### Live Countdown
+The session reset timer counts down in real-time (seconds), not just every 30s refresh.
 
-Tracked components: **claude.ai - Platform - API - Claude Code - Cowork - Gov**
+### Circular Progress Ring
+Replaces the traditional progress bar with an animated circular ring for the session limit.
 
-When status changes, a **KDE desktop notification** is sent via `notify-send`.
+### Model Distribution
+Horizontal stacked bar showing Opus/Sonnet/Haiku usage split with color legend.
+
+### Peak Hours Chart
+24-column mini bar chart showing your usage patterns by hour. Work hours in amber, night hours in blue.
+
+### Quick Actions
+- **claude.ai** - Open Claude in browser
+- **Status** - Open status.claude.com
+- **Copy Stats** - Copy formatted stats to clipboard
+
+### Streak Counter
+Shows consecutive days of Claude usage in the footer.
+
+### Easter Egg
+Click the Clawd mascot 5 times rapidly to cycle through all mascot states. Returns to live data after 30s.
+
+---
+
+## Adaptive Thinking Workaround
+
+If Claude feels "lazy" or gives shallow answers:
+
+```json
+// ~/.claude/settings.json
+{
+  "effortLevel": "high",
+  "env": {
+    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1"
+  }
+}
+```
+
+This forces full reasoning on every turn. Trade-off: consumes rate limit faster, but significantly better output quality.
+
+---
+
+## Testing States
+
+The collector supports a `--test-state` flag for previewing mascot states:
+
+```bash
+~/.local/bin/claude-usage-collector.py --test-state=genius
+~/.local/bin/claude-usage-collector.py --test-state=smart
+~/.local/bin/claude-usage-collector.py --test-state=slow
+~/.local/bin/claude-usage-collector.py --test-state=dumb
+~/.local/bin/claude-usage-collector.py --test-state=braindead
+```
 
 ---
 
@@ -196,26 +256,6 @@ When status changes, a **KDE desktop notification** is sent via `notify-send`.
 cd claude-usage-widget
 chmod +x uninstall.sh
 ./uninstall.sh
-```
-
-Then remove the widget from your panel manually.
-
----
-
-## Configuration
-
-Config is stored at `~/.claude/widget-config.json`:
-
-```json
-{
-  "org_id": "auto-detected-uuid",
-  "setup_done": true
-}
-```
-
-To re-run setup:
-```bash
-~/.local/bin/claude-usage-collector.py --setup
 ```
 
 ---
@@ -228,17 +268,14 @@ To re-run setup:
 - Run `~/.local/bin/claude-usage-collector.py --setup` to re-configure
 
 ### Widget shows `Offline` instead of `Live`
-- Your browser session may have expired — log in to claude.ai again
-- Cloudflare may be blocking requests — visit claude.ai to refresh the `cf_clearance` cookie
+- Your browser session may have expired - log in to claude.ai again
+- Visit claude.ai to refresh the `cf_clearance` cookie
 
 ### Claude feels "dumb" or lazy
 1. Check the Dumbness Score in the widget
-2. Try disabling Adaptive Thinking (see [workaround above](#adaptive-thinking-workaround))
-3. Check [status.claude.com](https://status.claude.com) for active incidents
-4. If session usage > 80%, wait for the 5h window to reset
-
-### Service health shows `Unknown`
-- Check connectivity: `curl -s https://status.claude.com/api/v2/status.json`
+2. Disable Adaptive Thinking (see workaround above)
+3. Check status.claude.com for incidents
+4. If session > 80%, wait for the 5h window to reset
 
 ### Timer not running
 ```bash
@@ -246,24 +283,31 @@ systemctl --user status claude-usage-collector.timer
 systemctl --user enable --now claude-usage-collector.timer
 ```
 
-### Widget not appearing in "Add Widgets"
-```bash
-kpackagetool6 --type Plasma/Applet --list | grep claude
-```
-
 ---
 
 ## Supported Plans
 
-| Plan | Data shown |
-|------|-----------|
-| Max (20x) | Session %, Weekly all %, Weekly Sonnet %, Balance, Dumbness |
-| Max (5x) | Session %, Weekly all %, Weekly Sonnet %, Balance, Dumbness |
-| Pro | Session %, Weekly all %, Dumbness |
-| Free | Session %, Dumbness |
+| Plan | Features |
+|------|----------|
+| Max (20x) | All features, full limits tracking |
+| Max (5x) | All features, full limits tracking |
+| Pro | Session %, weekly %, dumbness score |
+| Free | Session %, dumbness score |
 
 ---
 
-## License
+## Tech Stack
 
-MIT
+- **Widget**: QML (Qt 6) + Kirigami + PlasmaComponents3
+- **Data collector**: Python 3 (stdlib only, no pip dependencies)
+- **Sprite generator**: Python 3 + Pillow
+- **Timer**: systemd user timer (30s interval)
+- **APIs**: claude.ai (authenticated), status.claude.com (public)
+
+---
+
+<div align="center">
+
+**MIT License** | Made by [MrSchrodingers](https://github.com/MrSchrodingers)
+
+</div>
