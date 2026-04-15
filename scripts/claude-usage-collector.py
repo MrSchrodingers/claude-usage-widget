@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """
-Claude Usage Data Collector for KDE Plasma Widget
-Fetches real-time usage limits from claude.ai API and local Claude Code data.
+Claude Usage Data Collector
+Parses ~/.claude/ local data and outputs structured JSON for the Plasma widget.
+Runs periodically via systemd timer or called directly.
 """
 
 import json
 import os
+import glob
 import sys
 import urllib.request
-import sqlite3
-import shutil
+import urllib.error
+import http.cookiejar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
 CLAUDE_DIR = Path.home() / ".claude"
-CONFIG_FILE = CLAUDE_DIR / "widget-config.json"
 OUTPUT_FILE = CLAUDE_DIR / "widget-data.json"
+STATUS_CACHE_FILE = CLAUDE_DIR / "widget-status-prev.json"
 
+# Organization ID (extracted from credentials)
+ORG_ID = "AUTO_DETECT"
+
+# Anthropic pricing (per 1M tokens) — May 2025 public prices
 PRICING = {
     "claude-opus-4-6":            {"input": 15.00, "output": 75.00, "cache_read": 1.50,  "cache_create": 18.75},
     "claude-sonnet-4-6":          {"input":  3.00, "output": 15.00, "cache_read": 0.30,  "cache_create":  3.75},
@@ -26,163 +32,54 @@ PRICING = {
 }
 
 MODEL_DISPLAY = {
-    "claude-opus-4-6": "Opus", "claude-sonnet-4-6": "Sonnet",
-    "claude-sonnet-4-5-20250929": "Sonnet 4.5", "claude-haiku-4-5-20251001": "Haiku",
+    "claude-opus-4-6":            "Opus",
+    "claude-sonnet-4-6":          "Sonnet",
+    "claude-sonnet-4-5-20250929": "Sonnet 4.5",
+    "claude-haiku-4-5-20251001":  "Haiku",
 }
 
 MODEL_COLORS = {
-    "Opus": "#D97706", "Sonnet": "#2563EB", "Sonnet 4.5": "#6366F1", "Haiku": "#10B981",
+    "Opus":       "#D97706",
+    "Sonnet":     "#2563EB",
+    "Sonnet 4.5": "#6366F1",
+    "Haiku":      "#10B981",
+}
+
+# Statuspage.io component IDs → short display names
+COMPONENT_SHORT_NAMES = {
+    "rwppv331jlwc": "claude.ai",
+    "0qbwn08sd68x": "Platform",
+    "k8w3r06qmzrp": "API",
+    "yyzkbfz2thpt": "Claude Code",
+    "bpp5gb3hpjcl": "Cowork",
+    "0scnb50nvy53": "Gov",
 }
 
 
-# ─── Config ───
-
-def load_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {}
-
-def save_config(cfg):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2)
-
-
-# ─── Cookie extraction (Firefox + Chromium) ───
-
-def get_claude_cookies():
-    """Extract claude.ai cookies from the user's browser."""
-    cookies = _try_firefox_cookies()
-    if cookies:
-        return cookies
-    cookies = _try_chromium_cookies()
-    return cookies or ""
-
-def _try_firefox_cookies():
-    firefox_dir = Path.home() / ".mozilla" / "firefox"
-    if not firefox_dir.exists():
-        return ""
-    for profile in sorted(firefox_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        cookie_db = profile / "cookies.sqlite"
-        if not cookie_db.exists():
-            continue
-        try:
-            tmp = Path("/tmp/.claude-widget-cookies.sqlite")
-            shutil.copy2(cookie_db, tmp)
-            conn = sqlite3.connect(str(tmp))
-            rows = conn.execute("SELECT name, value FROM moz_cookies WHERE host LIKE '%claude.ai%'").fetchall()
-            conn.close()
-            tmp.unlink(missing_ok=True)
-            if rows:
-                return "; ".join(f"{n}={v}" for n, v in rows)
-        except Exception:
-            continue
-    return ""
-
-def _try_chromium_cookies():
-    """Best-effort Chromium cookie read (unencrypted only — Linux often encrypts)."""
-    for browser_dir in ["google-chrome", "chromium", "BraveSoftware/Brave-Browser"]:
-        cookie_db = Path.home() / ".config" / browser_dir / "Default" / "Cookies"
-        if not cookie_db.exists():
-            continue
-        try:
-            tmp = Path("/tmp/.claude-widget-chromium-cookies.sqlite")
-            shutil.copy2(cookie_db, tmp)
-            conn = sqlite3.connect(str(tmp))
-            rows = conn.execute(
-                "SELECT name, value FROM cookies WHERE host_key LIKE '%claude.ai%' AND value != ''"
-            ).fetchall()
-            conn.close()
-            tmp.unlink(missing_ok=True)
-            if rows:
-                return "; ".join(f"{n}={v}" for n, v in rows)
-        except Exception:
-            continue
-    return ""
+def calculate_cost(model, input_t, output_t, cache_read_t, cache_create_t):
+    """Calculate cost in USD for a given model and token counts."""
+    p = PRICING.get(model)
+    if not p:
+        return 0.0
+    return (
+        (input_t / 1_000_000) * p["input"]
+        + (output_t / 1_000_000) * p["output"]
+        + (cache_read_t / 1_000_000) * p["cache_read"]
+        + (cache_create_t / 1_000_000) * p["cache_create"]
+    )
 
 
-# ─── Org ID auto-detection ───
-
-def detect_org_id(cookies):
-    """Auto-detect organization ID from claude.ai API."""
-    cfg = load_config()
-    if cfg.get("org_id"):
-        return cfg["org_id"]
-
-    # Try to find in cookies (lastActiveOrg cookie)
-    for part in cookies.split(";"):
-        part = part.strip()
-        if part.startswith("lastActiveOrg="):
-            org_id = part.split("=", 1)[1]
-            cfg["org_id"] = org_id
-            save_config(cfg)
-            return org_id
-
-    # Try API
-    try:
-        req = urllib.request.Request("https://claude.ai/api/organizations")
-        req.add_header("Cookie", cookies)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0")
-        resp = urllib.request.urlopen(req, timeout=10)
-        orgs = json.loads(resp.read().decode())
-        if orgs and len(orgs) > 0:
-            org_id = orgs[0].get("uuid", "")
-            if org_id:
-                cfg["org_id"] = org_id
-                save_config(cfg)
-                return org_id
-    except Exception:
-        pass
-
-    return None
-
-
-# ─── API requests ───
-
-def _api_get(cookies, org_id, path):
-    url = f"https://claude.ai/api/organizations/{org_id}/{path}"
-    req = urllib.request.Request(url)
-    req.add_header("Cookie", cookies)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0")
-    req.add_header("anthropic-client-platform", "web_claude_ai")
-    req.add_header("anthropic-client-version", "1.0.0")
-    try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read().decode())
-    except Exception:
+def load_stats_cache():
+    """Load the stats-cache.json file."""
+    path = CLAUDE_DIR / "stats-cache.json"
+    if not path.exists():
         return None
+    with open(path) as f:
+        return json.load(f)
 
-
-# ─── Plan detection ───
-
-def detect_plan(cookies, org_id):
-    """Detect the user's plan from credentials or API."""
-    # Check Claude Code credentials
-    creds_file = CLAUDE_DIR / ".credentials.json"
-    if creds_file.exists():
-        try:
-            with open(creds_file) as f:
-                creds = json.load(f)
-            oauth = creds.get("claudeAiOauth", {})
-            sub = oauth.get("subscriptionType", "")
-            tier = oauth.get("rateLimitTier", "")
-            if sub and tier:
-                multiplier = ""
-                if "20x" in tier:
-                    multiplier = " (20x)"
-                elif "5x" in tier:
-                    multiplier = " (5x)"
-                return f"{sub.title()}{multiplier}"
-        except Exception:
-            pass
-    return "Pro"
-
-
-# ─── Local JSONL parsing ───
 
 def parse_timestamp(ts):
+    """Parse a timestamp value (int ms, float, or ISO-8601 string) to datetime."""
     if isinstance(ts, (int, float)):
         return datetime.fromtimestamp(ts / 1000 if ts > 1e12 else ts, tz=timezone.utc)
     elif isinstance(ts, str):
@@ -192,232 +89,541 @@ def parse_timestamp(ts):
             return None
     return None
 
-def calculate_cost(model, inp, out, cr, cc):
-    p = PRICING.get(model)
-    if not p:
-        return 0.0
-    return (inp/1e6)*p["input"] + (out/1e6)*p["output"] + (cr/1e6)*p["cache_read"] + (cc/1e6)*p["cache_create"]
 
-def load_stats_cache():
-    path = CLAUDE_DIR / "stats-cache.json"
-    return json.load(open(path)) if path.exists() else None
+def parse_sessions_in_window(cutoff_utc, end_utc=None):
+    """Parse JSONL session files for records within a time window.
 
-def parse_sessions_in_window(cutoff, end=None):
-    if end is None:
-        end = datetime.now(timezone.utc)
-    model_tokens = defaultdict(lambda: {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0})
-    sessions, session_set, total_msgs = [], set(), 0
-    mtime_cutoff = (cutoff - timedelta(hours=1)).timestamp()
-    projects = CLAUDE_DIR / "projects"
-    if not projects.exists():
-        return dict(model_tokens), sessions, total_msgs
+    Returns: (model_tokens, sessions_list, message_count, sonnet_only_tokens)
+    """
+    if end_utc is None:
+        end_utc = datetime.now(timezone.utc)
 
-    for jf in projects.rglob("*.jsonl"):
+    model_tokens = defaultdict(lambda: {
+        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0
+    })
+    sonnet_tokens = defaultdict(lambda: {
+        "input": 0, "output": 0, "cache_read": 0, "cache_create": 0
+    })
+    sessions = []
+    session_set = set()
+    total_messages = 0
+
+    # Skip files not modified recently (optimization)
+    mtime_cutoff = (cutoff_utc - timedelta(hours=1)).timestamp()
+
+    projects_dir = CLAUDE_DIR / "projects"
+    if not projects_dir.exists():
+        return model_tokens, sessions, total_messages, sonnet_tokens
+
+    for jsonl_file in projects_dir.rglob("*.jsonl"):
+        # Skip old files
         try:
-            if jf.stat().st_mtime < mtime_cutoff:
+            if jsonl_file.stat().st_mtime < mtime_cutoff:
                 continue
         except OSError:
             continue
-        is_sub = "subagents" in str(jf)
-        proj = jf.parts[-2] if not is_sub else jf.parts[-3]
-        if proj.startswith("-"):
-            proj = proj[1:].replace("-", "/")
+
+        is_subagent = "subagents" in str(jsonl_file)
+        project_name = jsonl_file.parts[-2] if not is_subagent else jsonl_file.parts[-3]
+        if project_name.startswith("-"):
+            project_name = project_name[1:].replace("-", "/")
+
         try:
-            with open(jf) as f:
-                has_window, msgs, start = False, 0, None
+            with open(jsonl_file) as f:
+                session_has_window = False
+                session_messages = 0
+                session_start = None
+
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
                     try:
-                        rec = json.loads(line)
+                        record = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    ts = parse_timestamp(rec.get("timestamp"))
-                    if not ts or ts < cutoff or ts > end:
+
+                    rec_type = record.get("type", "")
+                    msg = record.get("message", {})
+
+                    # Parse timestamp
+                    ts = record.get("timestamp")
+                    rec_date = parse_timestamp(ts) if ts else None
+                    if not rec_date:
                         continue
-                    if start is None:
-                        start = ts
-                    has_window = True
-                    rt = rec.get("type", "")
-                    msg = rec.get("message", {})
-                    if rt in ("user", "assistant") or msg.get("role") in ("user", "assistant"):
-                        msgs += 1
+
+                    # Check if within window
+                    if rec_date < cutoff_utc or rec_date > end_utc:
+                        continue
+
+                    if session_start is None:
+                        session_start = rec_date
+                    session_has_window = True
+
+                    # Count messages
+                    if rec_type in ("user", "assistant") or msg.get("role") in ("user", "assistant"):
+                        session_messages += 1
                         if msg.get("role") == "assistant":
-                            total_msgs += 1
+                            total_messages += 1
+
+                    # Extract token usage
                     usage = msg.get("usage", {})
                     model = msg.get("model", "")
                     if usage and model:
-                        model_tokens[model]["input"] += usage.get("input_tokens", 0)
-                        model_tokens[model]["output"] += usage.get("output_tokens", 0)
-                        model_tokens[model]["cache_read"] += usage.get("cache_read_input_tokens", 0)
-                        model_tokens[model]["cache_create"] += usage.get("cache_creation_input_tokens", 0)
-                if has_window and not is_sub and jf.stem not in session_set:
-                    session_set.add(jf.stem)
-                    sessions.append({"id": jf.stem[:8], "project": proj, "messages": msgs,
-                                     "start": start.isoformat() if start else ""})
+                        inp = usage.get("input_tokens", 0)
+                        out = usage.get("output_tokens", 0)
+                        cr = usage.get("cache_read_input_tokens", 0)
+                        cc = usage.get("cache_creation_input_tokens", 0)
+
+                        model_tokens[model]["input"] += inp
+                        model_tokens[model]["output"] += out
+                        model_tokens[model]["cache_read"] += cr
+                        model_tokens[model]["cache_create"] += cc
+
+                        # Track Sonnet-only usage
+                        if "sonnet" in model.lower():
+                            sonnet_tokens[model]["input"] += inp
+                            sonnet_tokens[model]["output"] += out
+                            sonnet_tokens[model]["cache_read"] += cr
+                            sonnet_tokens[model]["cache_create"] += cc
+
+                if session_has_window and not is_subagent:
+                    sid = jsonl_file.stem
+                    if sid not in session_set:
+                        session_set.add(sid)
+                        sessions.append({
+                            "id": sid[:8],
+                            "project": project_name,
+                            "messages": session_messages,
+                            "start": session_start.isoformat() if session_start else "",
+                        })
+
         except (PermissionError, OSError):
             continue
-    return dict(model_tokens), sessions, total_msgs
+
+    return dict(model_tokens), sessions, total_messages, dict(sonnet_tokens)
 
 
-# ─── Rate limits ───
+def compute_window_cost(model_tokens):
+    """Compute total cost from model token dict."""
+    total = 0.0
+    for model, t in model_tokens.items():
+        total += calculate_cost(model, t["input"], t["output"], t["cache_read"], t["cache_create"])
+    return total
 
-def build_rate_limits(cookies, org_id, plan_name):
-    now = datetime.now(timezone.utc)
 
-    if cookies and org_id:
-        api = _api_get(cookies, org_id, "usage")
-        credits = _api_get(cookies, org_id, "prepaid/credits")
+def compute_window_output_tokens(model_tokens):
+    """Sum output tokens across all models (primary rate limit metric)."""
+    return sum(t["output"] for t in model_tokens.values())
 
-        if api:
-            fh = api.get("five_hour", {})
-            sd = api.get("seven_day", {})
-            ss = api.get("seven_day_sonnet") or {}
 
-            def reset_mins(iso):
-                try:
-                    return max(0, int((datetime.fromisoformat(iso) - now).total_seconds() / 60))
-                except Exception:
-                    return 0
+def get_claude_cookies():
+    """Extract all claude.ai cookies from Firefox for API auth."""
+    import sqlite3
+    import shutil
+    firefox_dir = Path.home() / ".mozilla" / "firefox"
+    if not firefox_dir.exists():
+        return ""
+    for profile in firefox_dir.iterdir():
+        cookie_db = profile / "cookies.sqlite"
+        if cookie_db.exists():
+            try:
+                tmp_db = Path("/tmp/claude_cookies.sqlite")
+                shutil.copy2(cookie_db, tmp_db)
+                conn = sqlite3.connect(str(tmp_db))
+                cursor = conn.execute(
+                    "SELECT name, value FROM moz_cookies WHERE host LIKE '%claude.ai%'"
+                )
+                pairs = [f"{name}={value}" for name, value in cursor.fetchall()]
+                conn.close()
+                tmp_db.unlink(missing_ok=True)
+                if pairs:
+                    return "; ".join(pairs)
+            except Exception:
+                continue
+    return ""
 
-            def reset_label(iso):
-                try:
-                    return datetime.fromisoformat(iso).strftime("%a %I:%M %p")
-                except Exception:
-                    return ""
 
-            result = {
-                "session": {"percentUsed": fh.get("utilization", 0),
-                            "resetsInMinutes": reset_mins(fh.get("resets_at", "")), "windowHours": 5},
-                "weeklyAll": {"percentUsed": sd.get("utilization", 0),
-                              "resetsLabel": reset_label(sd.get("resets_at", ""))},
-                "weeklySonnet": {"percentUsed": ss.get("utilization", 0),
-                                 "resetsLabel": reset_label(ss.get("resets_at", ""))},
-                "plan": plan_name, "source": "api",
-            }
-            if credits:
-                amt = credits.get("amount", 0)
-                cur = credits.get("currency", "USD")
-                result["credits"] = {"amount": amt / 100, "currency": cur}
-            return result
+def _api_request(path):
+    """Make an authenticated request to claude.ai API."""
+    cookies = get_claude_cookies()
+    if not cookies:
+        return None
 
-    # Fallback: local estimate
-    fh_t, _, _ = parse_sessions_in_window(now - timedelta(hours=5), now)
-    wk_t, _, _ = parse_sessions_in_window(now - timedelta(days=7), now)
-    fh_out = sum(t["output"] for t in fh_t.values())
-    wk_out = sum(t["output"] for t in wk_t.values())
+    url = f"https://claude.ai/api/organizations/{ORG_ID}/{path}"
+    req = urllib.request.Request(url)
+    req.add_header("Cookie", cookies)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0")
+    req.add_header("anthropic-client-platform", "web_claude_ai")
+    req.add_header("anthropic-client-version", "1.0.0")
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+        return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def fetch_usage_from_api():
+    """Fetch usage/utilization data with five_hour, seven_day, etc."""
+    return _api_request("usage")
+
+
+def fetch_credits_from_api():
+    """Fetch prepaid credits balance."""
+    return _api_request("prepaid/credits")
+
+
+def fetch_service_status():
+    """Fetch Claude service health from status.claude.com (Statuspage.io API)."""
+    try:
+        req = urllib.request.Request("https://status.claude.com/api/v2/summary.json")
+        req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+    # Showcase components only (the main ones)
+    components = []
+    for c in data.get("components", []):
+        if c.get("showcase", False):
+            components.append({
+                "id": c["id"],
+                "name": COMPONENT_SHORT_NAMES.get(c["id"], c["name"].split(" ")[0]),
+                "status": c["status"],
+            })
+
+    # Active (non-resolved) incidents
+    active_incidents = []
+    for inc in data.get("incidents", []):
+        if inc.get("resolved_at") is None:
+            updates = inc.get("incident_updates", [])
+            latest_body = updates[0].get("body", "") if updates else ""
+            active_incidents.append({
+                "name": inc["name"],
+                "status": inc["status"],
+                "impact": inc.get("impact", ""),
+                "latest_update": latest_body,
+                "started_at": inc.get("started_at", ""),
+                "url": inc.get("shortlink", ""),
+            })
+
+    overall = data.get("status", {})
     return {
-        "session": {"percentUsed": round(min(100, fh_out / 4e6 * 100), 1), "resetsInMinutes": 300, "windowHours": 5},
-        "weeklyAll": {"percentUsed": round(min(100, wk_out / 40e6 * 100), 1), "resetsLabel": ""},
-        "weeklySonnet": {"percentUsed": 0, "resetsLabel": ""},
-        "plan": plan_name, "source": "local_estimate",
+        "indicator": overall.get("indicator", "none"),
+        "description": overall.get("description", "All Systems Operational"),
+        "updated_at": data.get("page", {}).get("updated_at", ""),
+        "components": components,
+        "active_incidents": active_incidents,
     }
 
 
-# ─── Main builder ───
+def notify_status_change(new_status):
+    """Send KDE desktop notification when Claude service status changes."""
+    if new_status is None:
+        return
+
+    new_indicator = new_status.get("indicator", "none")
+    prev_indicator = "none"
+
+    if STATUS_CACHE_FILE.exists():
+        try:
+            prev = json.loads(STATUS_CACHE_FILE.read_text())
+            prev_indicator = prev.get("indicator", "none")
+        except Exception:
+            pass
+
+    # Save current state
+    try:
+        STATUS_CACHE_FILE.write_text(json.dumps({"indicator": new_indicator}))
+    except Exception:
+        pass
+
+    # Only notify on change
+    if new_indicator == prev_indicator:
+        return
+
+    import subprocess
+
+    if new_indicator == "none":
+        title = "Claude Status"
+        body = "All Systems Operational"
+        urgency = "normal"
+    else:
+        title = "Claude Status Alert"
+        incidents = new_status.get("active_incidents", [])
+        body = incidents[0]["name"] if incidents else new_status.get("description", "Service issue detected")
+        urgency = "critical" if new_indicator in ("major", "critical") else "normal"
+
+    try:
+        subprocess.run(
+            ["notify-send", "--urgency", urgency, "--icon", "claude-logo",
+             "--app-name", "Claude Status", title, body],
+            check=False, timeout=5
+        )
+    except Exception:
+        pass
+
+
+def build_rate_limits():
+    """Fetch rate limits from Claude.ai API (real data).
+
+    Falls back to local estimates if API is unavailable.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Try real API first
+    api_data = fetch_usage_from_api()
+    credits_data = fetch_credits_from_api()
+
+    if api_data:
+        five_hour = api_data.get("five_hour", {})
+        seven_day = api_data.get("seven_day", {})
+        seven_day_sonnet = api_data.get("seven_day_sonnet", {})
+
+        # Calculate reset time
+        resets_at = five_hour.get("resets_at", "")
+        reset_minutes = 0
+        if resets_at:
+            try:
+                reset_dt = datetime.fromisoformat(resets_at)
+                delta = reset_dt - now
+                reset_minutes = max(0, int(delta.total_seconds() / 60))
+            except ValueError:
+                pass
+
+        # Weekly all models reset
+        weekly_resets_at = seven_day.get("resets_at", "")
+        weekly_reset_label = ""
+        if weekly_resets_at:
+            try:
+                wr_dt = datetime.fromisoformat(weekly_resets_at)
+                weekly_reset_label = wr_dt.strftime("%a %I:%M %p")
+            except ValueError:
+                pass
+
+        # Weekly Sonnet reset
+        sonnet_resets_at = (seven_day_sonnet or {}).get("resets_at", "")
+        sonnet_reset_label = ""
+        if sonnet_resets_at:
+            try:
+                sr_dt = datetime.fromisoformat(sonnet_resets_at)
+                sonnet_reset_label = sr_dt.strftime("%a %I:%M %p")
+            except ValueError:
+                pass
+
+        result = {
+            "session": {
+                "percentUsed": five_hour.get("utilization", 0),
+                "resetsInMinutes": reset_minutes,
+                "windowHours": 5,
+            },
+            "weeklyAll": {
+                "percentUsed": seven_day.get("utilization", 0),
+                "resetsLabel": weekly_reset_label,
+            },
+            "weeklySonnet": {
+                "percentUsed": (seven_day_sonnet or {}).get("utilization", 0),
+                "resetsLabel": sonnet_reset_label,
+            },
+            "plan": "Max (20x)",
+            "source": "api",
+        }
+
+        # Add credits info
+        if credits_data:
+            amount = credits_data.get("amount", 0)
+            currency = credits_data.get("currency", "USD")
+            result["credits"] = {
+                "amount": amount / 100 if currency else amount,  # cents to currency
+                "currency": currency,
+            }
+
+        return result
+
+    # Fallback: estimate from local data
+    five_h_cutoff = now - timedelta(hours=5)
+    five_h_tokens, _, _, _ = parse_sessions_in_window(five_h_cutoff, now)
+    five_h_output = compute_window_output_tokens(five_h_tokens)
+
+    week_cutoff = now - timedelta(days=7)
+    week_tokens, _, _, week_sonnet = parse_sessions_in_window(week_cutoff, now)
+    week_output = compute_window_output_tokens(week_tokens)
+    week_sonnet_output = compute_window_output_tokens(week_sonnet)
+
+    SESSION_LIMIT = 4_000_000
+    WEEKLY_ALL_LIMIT = 40_000_000
+    WEEKLY_SONNET_LIMIT = 80_000_000
+
+    return {
+        "session": {
+            "percentUsed": round(min(100, five_h_output / SESSION_LIMIT * 100), 1),
+            "resetsInMinutes": 300,
+            "windowHours": 5,
+        },
+        "weeklyAll": {
+            "percentUsed": round(min(100, week_output / WEEKLY_ALL_LIMIT * 100), 1),
+            "resetsLabel": "",
+        },
+        "weeklySonnet": {
+            "percentUsed": round(min(100, week_sonnet_output / WEEKLY_SONNET_LIMIT * 100), 1),
+            "resetsLabel": "",
+        },
+        "plan": "Max (20x)",
+        "source": "local_estimate",
+    }
+
 
 def build_widget_data():
+    """Build the complete widget data JSON."""
     stats = load_stats_cache()
     now = datetime.now(timezone.utc)
 
-    # Auth
-    cookies = get_claude_cookies()
-    org_id = detect_org_id(cookies) if cookies else None
-    plan = detect_plan(cookies, org_id) if org_id else "Unknown"
-
-    # Rate limits (API or fallback)
-    rate_limits = build_rate_limits(cookies, org_id, plan)
-
-    # Today's local data
+    # Today's data (midnight UTC to now)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_tokens, today_sessions, today_msgs = parse_sessions_in_window(today_start, now)
+    today_tokens, today_sessions, today_msg_count, _ = parse_sessions_in_window(today_start, now)
 
+    # Rate limits
+    rate_limits = build_rate_limits()
+
+    # Service health from status.claude.com
+    service_status = fetch_service_status()
+    notify_status_change(service_status)
+
+    # Today's summary
+    today_total_input = 0
+    today_total_output = 0
+    today_total_cache_read = 0
+    today_total_cache_create = 0
+    today_total_cost = 0.0
     model_breakdown = []
-    for model, t in today_tokens.items():
+
+    for model, tokens in today_tokens.items():
         display = MODEL_DISPLAY.get(model, model.split("-")[1].title() if "-" in model else model)
         color = MODEL_COLORS.get(display, "#9CA3AF")
-        cost = calculate_cost(model, t["input"], t["output"], t["cache_read"], t["cache_create"])
-        total = t["input"] + t["output"] + t["cache_read"] + t["cache_create"]
-        model_breakdown.append({"model": display, "color": color, "totalTokens": total, "cost": round(cost, 4)})
-    model_breakdown.sort(key=lambda x: x["cost"], reverse=True)
-    grand = sum(m["totalTokens"] for m in model_breakdown)
-    for m in model_breakdown:
-        m["percentage"] = round((m["totalTokens"] / grand * 100) if grand > 0 else 0, 1)
+        cost = calculate_cost(model, tokens["input"], tokens["output"], tokens["cache_read"], tokens["cache_create"])
+        total_tokens = tokens["input"] + tokens["output"] + tokens["cache_read"] + tokens["cache_create"]
 
-    # 7-day trend
+        today_total_input += tokens["input"]
+        today_total_output += tokens["output"]
+        today_total_cache_read += tokens["cache_read"]
+        today_total_cache_create += tokens["cache_create"]
+        today_total_cost += cost
+
+        model_breakdown.append({
+            "model": display,
+            "color": color,
+            "input": tokens["input"],
+            "output": tokens["output"],
+            "cacheRead": tokens["cache_read"],
+            "cacheCreate": tokens["cache_create"],
+            "totalTokens": total_tokens,
+            "cost": round(cost, 4),
+        })
+
+    # Sort by cost descending
+    model_breakdown.sort(key=lambda x: x["cost"], reverse=True)
+
+    # Calculate percentages
+    grand_total_tokens = sum(m["totalTokens"] for m in model_breakdown)
+    for m in model_breakdown:
+        m["percentage"] = round((m["totalTokens"] / grand_total_tokens * 100) if grand_total_tokens > 0 else 0, 1)
+
+    # 7-day trend from stats-cache
     trend_7d = []
     if stats:
-        dt = {d["date"]: d["tokensByModel"] for d in stats.get("dailyModelTokens", [])}
-        da = {d["date"]: d for d in stats.get("dailyActivity", [])}
+        daily_tokens = {d["date"]: d["tokensByModel"] for d in stats.get("dailyModelTokens", [])}
+        daily_activity = {d["date"]: d for d in stats.get("dailyActivity", [])}
+
         for i in range(7, -1, -1):
             day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            trend_7d.append({"date": day, "label": (datetime.now() - timedelta(days=i)).strftime("%a"),
-                             "tokens": sum(dt.get(day, {}).values()),
-                             "messages": da.get(day, {}).get("messageCount", 0)})
+            day_label = (datetime.now() - timedelta(days=i)).strftime("%a")
+            tokens_by_model = daily_tokens.get(day, {})
+            total = sum(tokens_by_model.values())
+            activity = daily_activity.get(day, {})
+            trend_7d.append({
+                "date": day,
+                "label": day_label,
+                "tokens": total,
+                "messages": activity.get("messageCount", 0),
+                "sessions": activity.get("sessionCount", 0),
+            })
 
-    # Lifetime
+    # Lifetime stats
     lifetime = {}
     if stats:
-        lifetime = {"totalSessions": stats.get("totalSessions", 0),
-                     "totalMessages": stats.get("totalMessages", 0),
-                     "firstSession": stats.get("firstSessionDate", "")}
+        lifetime = {
+            "totalSessions": stats.get("totalSessions", 0),
+            "totalMessages": stats.get("totalMessages", 0),
+            "firstSession": stats.get("firstSessionDate", ""),
+            "longestSession": stats.get("longestSession", {}),
+            "peakHours": stats.get("hourCounts", {}),
+        }
 
-    return {"generatedAt": now.isoformat(), "rateLimits": rate_limits,
-            "today": {"sessions": len(today_sessions), "messages": today_msgs},
-            "modelBreakdown": model_breakdown, "trend7d": trend_7d, "lifetime": lifetime}
+        lifetime_cost = 0.0
+        model_usage = stats.get("modelUsage", {})
+        for model, usage in model_usage.items():
+            lifetime_cost += calculate_cost(
+                model,
+                usage.get("inputTokens", 0),
+                usage.get("outputTokens", 0),
+                usage.get("cacheReadInputTokens", 0),
+                usage.get("cacheCreationInputTokens", 0),
+            )
+        lifetime["totalCostUSD"] = round(lifetime_cost, 2)
 
+        total_lt = sum(
+            u.get("inputTokens", 0) + u.get("outputTokens", 0)
+            + u.get("cacheReadInputTokens", 0) + u.get("cacheCreationInputTokens", 0)
+            for u in model_usage.values()
+        )
+        lifetime["totalTokens"] = total_lt
 
-def setup():
-    """Interactive first-time setup."""
-    print("═══ Claude Usage Widget Setup ═══\n")
-    print("This widget needs access to your claude.ai session to fetch usage data.")
-    print("It reads cookies from your browser (Firefox/Chrome) automatically.\n")
+    # Cache efficiency
+    cache_total = today_total_cache_read + today_total_cache_create + today_total_input
+    cache_hit_rate = (today_total_cache_read / cache_total * 100) if cache_total > 0 else 0
 
-    cookies = get_claude_cookies()
-    if not cookies:
-        print("ERROR: No claude.ai cookies found in Firefox or Chrome.")
-        print("Please log in to https://claude.ai in your browser first, then re-run setup.")
-        sys.exit(1)
+    widget_data = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "rateLimits": rate_limits,
+        "today": {
+            "inputTokens": today_total_input,
+            "outputTokens": today_total_output,
+            "cacheReadTokens": today_total_cache_read,
+            "cacheCreateTokens": today_total_cache_create,
+            "totalTokens": today_total_input + today_total_output + today_total_cache_read + today_total_cache_create,
+            "costUSD": round(today_total_cost, 4),
+            "messages": today_msg_count,
+            "sessions": len(today_sessions),
+            "cacheHitRate": round(cache_hit_rate, 1),
+        },
+        "modelBreakdown": model_breakdown,
+        "sessions": sorted(today_sessions, key=lambda s: s.get("start", ""), reverse=True)[:10],
+        "trend7d": trend_7d,
+        "lifetime": lifetime,
+        "serviceStatus": service_status,
+    }
 
-    print("✓ Found claude.ai session cookies")
-    org_id = detect_org_id(cookies)
-    if not org_id:
-        print("ERROR: Could not detect organization ID.")
-        print("Please visit https://claude.ai/settings and re-run setup.")
-        sys.exit(1)
-
-    print(f"✓ Organization ID: {org_id}")
-    plan = detect_plan(cookies, org_id)
-    print(f"✓ Plan: {plan}")
-
-    usage = _api_get(cookies, org_id, "usage")
-    if usage:
-        print(f"✓ API connection working (session: {usage.get('five_hour', {}).get('utilization', '?')}% used)")
-    else:
-        print("⚠ API returned no data — will use local estimates")
-
-    save_config({"org_id": org_id, "setup_done": True})
-    print("\n✓ Setup complete! Config saved to ~/.claude/widget-config.json")
+    return widget_data
 
 
 def main():
-    if "--setup" in sys.argv:
-        setup()
-        return
-
     try:
         data = build_widget_data()
-        tmp = str(OUTPUT_FILE) + ".tmp"
-        with open(tmp, "w") as f:
+        # Atomic write
+        tmp_path = str(OUTPUT_FILE) + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(data, f, indent=2)
-        os.replace(tmp, OUTPUT_FILE)
+        os.replace(tmp_path, OUTPUT_FILE)
         if "--verbose" in sys.argv:
             print(json.dumps(data, indent=2))
         else:
-            src = data["rateLimits"].get("source", "?")
-            pct = data["rateLimits"]["session"]["percentUsed"]
-            print(f"OK: {pct}% session | source={src}")
+            cost = data["today"]["costUSD"]
+            tokens = data["today"]["totalTokens"]
+            sessions = data["today"]["sessions"]
+            print(f"OK: ${cost:.2f} | {tokens:,} tokens | {sessions} sessions")
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)

@@ -12,6 +12,10 @@ PlasmoidItem {
 
     property var usageData: ({})
     property bool hasData: Object.keys(usageData).length > 0
+    property var activeIncidents: {
+        var inc = usageData.serviceStatus?.active_incidents ?? [];
+        return inc.length > 0 ? [inc[0]] : [];
+    }
 
     readonly property int refreshInterval: 30000
 
@@ -32,8 +36,10 @@ PlasmoidItem {
     toolTipSubText: {
         if (!hasData) return "Loading...";
         var p = usageData.rateLimits?.session?.percentUsed ?? 0;
-        return "Session: " + Math.round(p) + "% | Weekly: " +
-               Math.round(usageData.rateLimits?.weeklyAll?.percentUsed ?? 0) + "%";
+        var base = "Session: " + Math.round(p) + "% | Weekly: " +
+                   Math.round(usageData.rateLimits?.weeklyAll?.percentUsed ?? 0) + "%";
+        var status = usageData.serviceStatus?.description ?? "";
+        return (status && status !== "All Systems Operational") ? base + "\n⚠ " + status : base;
     }
 
     // ─── Data ───
@@ -79,6 +85,22 @@ PlasmoidItem {
         return base;
     }
 
+    function statusColor(indicator) {
+        if (indicator === "none") return greenAccent;
+        if (indicator === "minor") return claudeAmberLight;
+        if (indicator === "major") return "#F97316";
+        if (indicator === "critical") return redAlert;
+        return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.4);
+    }
+
+    function componentStatusColor(status) {
+        if (status === "operational") return greenAccent;
+        if (status === "degraded_performance") return claudeAmberLight;
+        if (status === "partial_outage") return "#F97316";
+        if (status === "major_outage") return redAlert;
+        return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.4);
+    }
+
     // ─── Panel (Compact) ───
     compactRepresentation: MouseArea {
         Layout.minimumWidth: compactRow.implicitWidth
@@ -120,6 +142,23 @@ PlasmoidItem {
                     height: parent.height; radius: 2
                     color: barFill(pct, root.claudeAmber)
                     Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+                }
+            }
+
+            // Service status dot (pulsing when degraded/outage)
+            Rectangle {
+                id: statusDot
+                property string indicator: root.usageData.serviceStatus?.indicator ?? "none"
+                visible: root.hasData && indicator !== "none" && indicator !== "" && indicator !== "unknown"
+                width: 5; height: 5; radius: 2.5
+                color: statusColor(indicator)
+                Layout.alignment: Qt.AlignVCenter
+
+                SequentialAnimation on opacity {
+                    running: statusDot.visible && (statusDot.indicator === "major" || statusDot.indicator === "critical")
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.25; duration: 700; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0;  duration: 700; easing.type: Easing.InOutSine }
                 }
             }
         }
@@ -427,6 +466,154 @@ PlasmoidItem {
                         font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.2
                         font.weight: Font.Bold
                         color: root.claudeAmber
+                    }
+                }
+            }
+
+            // ══════════════════════════════════
+            // ── Service Health Card ──
+            // ══════════════════════════════════
+            Rectangle {
+                Layout.fillWidth: true
+                visible: root.usageData.serviceStatus != null
+                radius: 10
+                color: {
+                    var ind = root.usageData.serviceStatus?.indicator ?? "none";
+                    if (ind === "none") return root.cardBg;
+                    if (ind === "minor") return Qt.rgba(0.984, 0.620, 0.086, 0.10);
+                    return Qt.rgba(0.937, 0.267, 0.267, 0.10);
+                }
+                border.width: 1
+                border.color: {
+                    var ind = root.usageData.serviceStatus?.indicator ?? "none";
+                    if (ind === "none") return root.subtleBorder;
+                    if (ind === "minor") return Qt.rgba(0.984, 0.620, 0.086, 0.40);
+                    return Qt.rgba(0.937, 0.267, 0.267, 0.40);
+                }
+                implicitHeight: serviceHealthCol.implicitHeight + Kirigami.Units.mediumSpacing * 2
+
+                ColumnLayout {
+                    id: serviceHealthCol
+                    anchors.fill: parent
+                    anchors.margins: Kirigami.Units.mediumSpacing
+                    spacing: 6
+
+                    // Overall status row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Rectangle {
+                            width: 8; height: 8; radius: 4
+                            color: statusColor(root.usageData.serviceStatus?.indicator ?? "none")
+                        }
+
+                        PlasmaComponents3.Label {
+                            text: "Service Health"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.weight: Font.DemiBold
+                            opacity: 0.55
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        PlasmaComponents3.Label {
+                            text: {
+                                var ind = root.usageData.serviceStatus?.indicator ?? "none";
+                                if (ind === "none")      return "Healthy";
+                                if (ind === "minor")     return "Degraded";
+                                if (ind === "major")     return "Major Outage";
+                                if (ind === "critical")  return "Critical Outage";
+                                return "Unknown";
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            font.weight: Font.Bold
+                            color: statusColor(root.usageData.serviceStatus?.indicator ?? "none")
+                        }
+                    }
+
+                    // Component dots row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Repeater {
+                            model: root.usageData.serviceStatus?.components ?? []
+                            RowLayout {
+                                spacing: 3
+                                Rectangle {
+                                    width: 6; height: 6; radius: 3
+                                    color: componentStatusColor(modelData.status ?? "")
+                                }
+                                PlasmaComponents3.Label {
+                                    text: modelData.name ?? ""
+                                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                                    opacity: 0.55
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    // DownDetector link (crowd-sourced early warning)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Kirigami.Icon {
+                            source: "globe"
+                            Layout.preferredWidth: 10; Layout.preferredHeight: 10
+                            opacity: 0.35
+                        }
+
+                        PlasmaComponents3.Label {
+                            text: "User reports:"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                            opacity: 0.35
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        PlasmaComponents3.ToolButton {
+                            text: "DownDetector ↗"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.72
+                            opacity: 0.55
+                            flat: true
+                            padding: 0
+                            onClicked: Qt.openUrlExternally("https://downdetector.com/status/claude-ai/")
+                        }
+                    }
+
+                    // Active incident details
+                    Repeater {
+                        model: root.activeIncidents
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            PlasmaComponents3.Label {
+                                Layout.fillWidth: true
+                                text: modelData.name ?? ""
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.78
+                                font.weight: Font.DemiBold
+                                color: root.redAlert
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+
+                            PlasmaComponents3.Label {
+                                Layout.fillWidth: true
+                                visible: (modelData.latest_update ?? "") !== ""
+                                text: modelData.latest_update ?? ""
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.73
+                                opacity: 0.50
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                        }
                     }
                 }
             }
