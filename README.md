@@ -3,11 +3,11 @@
 A KDE Plasma 6 panel widget that shows your **Claude AI usage limits**, **service health**, and **weekly quotas** in real-time — directly in your taskbar.
 
 <p align="center">
-  <img src="screenshots/widget.png" alt="Claude Usage Widget popup" width="380"/>
+  <img src="screenshots/widget.gif" alt="Claude Usage Widget popup" width="427"/>
 </p>
 
 <p align="center">
-  <img src="screenshots/panel.png" alt="Claude panel compact view" />
+  <img src="screenshots/panel.png" alt="Claude panel compact view"/>
 </p>
 
 ---
