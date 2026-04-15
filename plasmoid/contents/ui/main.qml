@@ -217,53 +217,65 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
 
-                // Mascot: Clawd (healthy) or "This is Fine" (degraded)
-                Image {
-                    visible: !root.isDumb
-                    source: Qt.resolvedUrl("../icons/clawd.svg")
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.huge
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.huge
-                    sourceSize: Qt.size(Kirigami.Units.iconSizes.huge, Kirigami.Units.iconSizes.huge)
-                    fillMode: Image.PreserveAspectFit
-                }
+                // Clawd mascot — sun in corner when healthy, fire behind when dumb
                 Item {
-                    visible: root.isDumb
                     Layout.preferredWidth: Kirigami.Units.iconSizes.huge
                     Layout.preferredHeight: Kirigami.Units.iconSizes.huge
 
+                    // Fire sprite behind Clawd (dumb mode)
                     Image {
-                        id: fireImg
+                        id: fireSprite
+                        visible: root.isDumb
                         anchors.fill: parent
-                        source: Qt.resolvedUrl("../icons/this-is-fine.png")
+                        property int frame: 0
+                        source: Qt.resolvedUrl("../icons/fire-" + frame + ".png")
                         sourceSize: Qt.size(parent.width, parent.height)
                         fillMode: Image.PreserveAspectFit
-
-                        // Fire glow pulse
-                        SequentialAnimation on opacity {
+                        smooth: false
+                        Timer {
                             running: root.isDumb
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.75; duration: 300; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1.0;  duration: 400; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 0.85; duration: 250; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1.0;  duration: 350; easing.type: Easing.InOutSine }
+                            interval: 120; repeat: true
+                            onTriggered: fireSprite.frame = (fireSprite.frame + 1) % 6
                         }
                     }
 
-                    // Orange glow overlay (fire flicker)
-                    Rectangle {
+                    // Clawd
+                    Image {
                         anchors.fill: parent
-                        radius: 6
-                        color: "transparent"
-                        border.width: 2
-                        border.color: root.claudeAmber
+                        source: Qt.resolvedUrl("../icons/clawd.svg")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit
+                    }
 
-                        SequentialAnimation on opacity {
-                            running: root.isDumb
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.0; duration: 400; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 0.5; duration: 300; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 0.1; duration: 350; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 0.4; duration: 250; easing.type: Easing.InOutSine }
+                    // Sunglasses on Clawd (healthy only)
+                    Image {
+                        visible: !root.isDumb
+                        anchors.fill: parent
+                        source: Qt.resolvedUrl("../icons/sunglasses.png")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                    }
+
+                    // Small sun in top-right corner (healthy only)
+                    Image {
+                        id: sunCorner
+                        visible: !root.isDumb
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.topMargin: -4
+                        anchors.rightMargin: -4
+                        width: parent.width * 0.45
+                        height: parent.height * 0.45
+                        property int frame: 0
+                        source: Qt.resolvedUrl("../icons/sun-" + frame + ".png")
+                        sourceSize: Qt.size(width, height)
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                        Timer {
+                            running: !root.isDumb
+                            interval: 200; repeat: true
+                            onTriggered: sunCorner.frame = (sunCorner.frame + 1) % 6
                         }
                     }
                 }
