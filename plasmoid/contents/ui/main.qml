@@ -217,22 +217,54 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
 
-                // Mascot: Clawd (healthy) or Burrinho (degraded)
+                // Mascot: Clawd (healthy) or "This is Fine" (degraded)
                 Image {
-                    source: root.isDumb
-                        ? Qt.resolvedUrl("../icons/burrinho.svg")
-                        : Qt.resolvedUrl("../icons/clawd.svg")
+                    visible: !root.isDumb
+                    source: Qt.resolvedUrl("../icons/clawd.svg")
                     Layout.preferredWidth: Kirigami.Units.iconSizes.huge
                     Layout.preferredHeight: Kirigami.Units.iconSizes.huge
                     sourceSize: Qt.size(Kirigami.Units.iconSizes.huge, Kirigami.Units.iconSizes.huge)
                     fillMode: Image.PreserveAspectFit
+                }
+                Item {
+                    visible: root.isDumb
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.huge
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.huge
 
-                    // Wobble animation when dumb
-                    SequentialAnimation on rotation {
-                        running: root.isDumb
-                        loops: Animation.Infinite
-                        NumberAnimation { to: -8; duration: 400; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 8;  duration: 400; easing.type: Easing.InOutSine }
+                    Image {
+                        id: fireImg
+                        anchors.fill: parent
+                        source: Qt.resolvedUrl("../icons/this-is-fine.png")
+                        sourceSize: Qt.size(parent.width, parent.height)
+                        fillMode: Image.PreserveAspectFit
+
+                        // Fire glow pulse
+                        SequentialAnimation on opacity {
+                            running: root.isDumb
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.75; duration: 300; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1.0;  duration: 400; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 0.85; duration: 250; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1.0;  duration: 350; easing.type: Easing.InOutSine }
+                        }
+                    }
+
+                    // Orange glow overlay (fire flicker)
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 6
+                        color: "transparent"
+                        border.width: 2
+                        border.color: root.claudeAmber
+
+                        SequentialAnimation on opacity {
+                            running: root.isDumb
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.0; duration: 400; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 0.5; duration: 300; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 0.1; duration: 350; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 0.4; duration: 250; easing.type: Easing.InOutSine }
+                        }
                     }
                 }
 
@@ -718,8 +750,8 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             text: {
                                 var lvl = root.dumbLevel;
-                                if (lvl === "braindead") return "🧠 Braindead";
-                                if (lvl === "dumb") return "🐴 Dumb";
+                                if (lvl === "braindead") return "💀 Braindead";
+                                if (lvl === "dumb") return "🔥 This is Fine";
                                 if (lvl === "slow") return "🐌 Slow";
                                 return "🤔 Hmm";
                             }
