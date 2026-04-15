@@ -1,0 +1,21 @@
+{
+    "KPlugin": {
+        "Id": "org.kde.plasma.claudeusage",
+        "Name": "Claude Usage Monitor",
+        "Description": "Real-time Claude AI usage limits, session tracking, and balance from claude.ai",
+        "Category": "System Information",
+        "Icon": "claude-logo",
+        "Authors": [
+            {
+                "Name": "Claude Usage Widget Contributors"
+            }
+        ],
+        "License": "MIT",
+        "Version": "1.0.0",
+        "Website": "https://github.com/MrSchrodingers/claude-usage-widget"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}
