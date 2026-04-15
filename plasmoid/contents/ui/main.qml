@@ -167,17 +167,25 @@ PlasmoidItem {
     // ─── Popup (Full) ───
     fullRepresentation: PlasmaExtras.Representation {
         Layout.preferredWidth: Kirigami.Units.gridUnit * 24
-        Layout.preferredHeight: mainCol.implicitHeight + Kirigami.Units.largeSpacing * 2
+        Layout.preferredHeight: Kirigami.Units.gridUnit * 40
         Layout.minimumWidth: Kirigami.Units.gridUnit * 20
-        Layout.maximumHeight: Kirigami.Units.gridUnit * 38
+        Layout.maximumHeight: Kirigami.Units.gridUnit * 44
 
         header: PlasmaExtras.PlasmoidHeading { visible: false }
 
-        ColumnLayout {
-            id: mainCol
+        Flickable {
+            id: popupFlick
             anchors.fill: parent
-            anchors.margins: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.mediumSpacing
+            contentWidth: width
+            contentHeight: mainCol.implicitHeight + Kirigami.Units.largeSpacing * 2
+            clip: true
+
+            ColumnLayout {
+                id: mainCol
+                x: Kirigami.Units.largeSpacing
+                y: Kirigami.Units.largeSpacing
+                width: popupFlick.width - Kirigami.Units.largeSpacing * 2
+                spacing: Kirigami.Units.mediumSpacing
 
             // ══════════════════════════════════
             // ── Header with mascot ──
@@ -501,34 +509,63 @@ PlasmoidItem {
                     // Overall status row
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 4
+                        spacing: 6
 
+                        // Pulsing dot
                         Rectangle {
-                            width: 8; height: 8; radius: 4
-                            color: statusColor(root.usageData.serviceStatus?.indicator ?? "none")
+                            id: healthDot
+                            property string ind: root.usageData.serviceStatus?.indicator ?? "none"
+                            width: 10; height: 10; radius: 5
+                            color: statusColor(ind)
+
+                            SequentialAnimation on opacity {
+                                running: healthDot.ind !== "none"
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.3; duration: 900; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutSine }
+                            }
                         }
 
                         PlasmaComponents3.Label {
                             text: "Service Health"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.88
                             font.weight: Font.DemiBold
-                            opacity: 0.55
+                            opacity: 0.65
                         }
 
                         Item { Layout.fillWidth: true }
 
-                        PlasmaComponents3.Label {
-                            text: {
-                                var ind = root.usageData.serviceStatus?.indicator ?? "none";
-                                if (ind === "none")      return "Healthy";
-                                if (ind === "minor")     return "Degraded";
-                                if (ind === "major")     return "Major Outage";
-                                if (ind === "critical")  return "Critical Outage";
-                                return "Unknown";
+                        // Status pill badge
+                        Rectangle {
+                            property string ind: root.usageData.serviceStatus?.indicator ?? "none"
+                            radius: height / 2
+                            color: {
+                                var c = statusColor(ind);
+                                return Qt.rgba(c.r, c.g, c.b, 0.20);
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
-                            font.weight: Font.Bold
-                            color: statusColor(root.usageData.serviceStatus?.indicator ?? "none")
+                            border.width: 1
+                            border.color: {
+                                var c = statusColor(ind);
+                                return Qt.rgba(c.r, c.g, c.b, 0.55);
+                            }
+                            implicitWidth: _statusBadge.implicitWidth + 18
+                            implicitHeight: _statusBadge.implicitHeight + 8
+
+                            PlasmaComponents3.Label {
+                                id: _statusBadge
+                                anchors.centerIn: parent
+                                text: {
+                                    var ind = root.usageData.serviceStatus?.indicator ?? "none";
+                                    if (ind === "none")     return "Healthy";
+                                    if (ind === "minor")    return "Degraded";
+                                    if (ind === "major")    return "Major Outage";
+                                    if (ind === "critical") return "Critical Outage";
+                                    return "Unknown";
+                                }
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.88
+                                font.weight: Font.Bold
+                                color: statusColor(root.usageData.serviceStatus?.indicator ?? "none")
+                            }
                         }
                     }
 
@@ -744,5 +781,6 @@ PlasmoidItem {
                 }
             }
         }
+        } // Flickable
     }
 }
