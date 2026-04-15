@@ -59,6 +59,10 @@ mkdir -p "$PLASMOID_DIR/contents/"{ui,icons,config}
 cp "$REPO_DIR/plasmoid/metadata.json" "$PLASMOID_DIR/"
 cp "$REPO_DIR/plasmoid/contents/ui/main.qml" "$PLASMOID_DIR/contents/ui/"
 cp "$REPO_DIR/plasmoid/contents/icons/"* "$PLASMOID_DIR/contents/icons/"
+
+# Install icon for About dialog
+mkdir -p "$HOME/.local/share/icons/hicolor/48x48/apps/"
+cp "$REPO_DIR/plasmoid/contents/icons/claude-logo.png" "$HOME/.local/share/icons/hicolor/48x48/apps/claude-logo.png"
 echo -e "  ${GREEN}✓${NC} Plasmoid installed to $PLASMOID_DIR"
 
 # ── Install systemd timer ──

@@ -2,12 +2,13 @@
     "KPlugin": {
         "Id": "org.kde.plasma.claudeusage",
         "Name": "Claude Usage Monitor",
-        "Description": "Real-time Claude AI usage limits, session tracking, and balance from claude.ai",
+        "Description": "Real-time Claude AI usage limits, session tracking, weekly quotas, and prepaid balance from claude.ai API. Shows live data directly in your KDE Plasma panel.",
         "Category": "System Information",
         "Icon": "claude-logo",
         "Authors": [
             {
-                "Name": "Claude Usage Widget Contributors"
+                "Name": "MrSchrodingers",
+                "Email": "mrschrodingers@gmail.com"
             }
         ],
         "License": "MIT",
