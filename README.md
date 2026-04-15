@@ -1,6 +1,6 @@
 # Claude Usage Monitor — KDE Plasma 6 Widget
 
-A KDE Plasma 6 panel widget that shows your **Claude AI usage limits**, **service health**, and **weekly quotas** in real-time — directly in your taskbar.
+A KDE Plasma 6 panel widget that shows your **Claude AI usage limits**, **service health**, **intelligence score**, and **weekly quotas** in real-time — directly in your taskbar.
 
 <p align="center">
   <img src="screenshots/widget.gif" alt="Claude Usage Widget popup" width="427"/>
@@ -14,16 +14,74 @@ A KDE Plasma 6 panel widget that shows your **Claude AI usage limits**, **servic
 
 ## Features
 
+### Usage Monitoring
 - **Session limit** — live 5-hour usage % with reset countdown
 - **Weekly limits** — all models + Sonnet-only with reset dates
-- **Service health** — real-time status from [status.claude.com](https://status.claude.com): Healthy / Degraded / Major Outage / Critical
-- **Active incidents** — shows incident name and latest update from Anthropic
-- **KDE notifications** — desktop alert via `notify-send` when service status changes
 - **Prepaid balance** — current credits in your currency (BRL, USD, etc.)
 - **7-day activity chart** — local token usage trend from Claude Code
+
+### Intelligence & Health
+- **Dumbness Score** — composite 0-100 score that detects when Claude is performing poorly
+- **Burrinho mascot** — pixel art donkey replaces Clawd when Claude is "dumb" (wobble animation)
+- **Service health** — real-time from [status.claude.com](https://status.claude.com): Healthy / Degraded / Major Outage / Critical
+- **Active incidents** — incident name and latest update from Anthropic
+- **KDE notifications** — desktop alert via `notify-send` on status changes
+
+### Performance Metrics
+- **Burn rate** — tokens/hour consumption rate (rolling 2h window)
+- **Error tracking** — counts 429/529/overloaded errors from local JSONL files (rolling 2h)
+- **Adaptive Thinking detection** — reads `~/.claude/settings.json` and warns if disabled
+
+### Quick Actions
+- **claude.ai** — open Claude in browser
+- **Status** — open status.claude.com
+- **DownDetector** — crowd-sourced early warnings
+
+### General
 - **Auto-refresh** every 30 seconds via systemd timer
 - **Zero API keys** — authenticates via your browser session cookies
-- **Official Claude logos** — Clawd pixel mascot + Claude logo
+- **Auto-detection** — org_id detected from cookies on first run
+
+---
+
+## Dumbness Score
+
+The widget computes a composite intelligence score that tells you when Claude is likely to give poor results:
+
+| Factor | Points | Trigger |
+|--------|--------|---------|
+| Service health | 0-40 | Critical=40, Major=30, Degraded=15 |
+| Session utilization | 0-25 | >90%=25, >80%=15, >60%=5 |
+| API errors (2h) | 0-20 | >10 errors=20, >3=10, >0=5 |
+| Adaptive Thinking OFF | 10 | Detected in `settings.json` |
+| 1M Context OFF | 5 | Detected in `settings.json` |
+
+**Levels:**
+
+| Score | Level | Mascot |
+|-------|-------|--------|
+| 0-9 | Genius | Clawd (normal) |
+| 10-24 | Smart | Clawd (normal) |
+| 25-49 | Slow | Burrinho (wobble) |
+| 50-74 | Dumb | Burrinho (wobble) |
+| 75-100 | Braindead | Burrinho (wobble) |
+
+When the score reaches 25+, the Clawd mascot is replaced by an animated pixel art donkey ("burrinho").
+
+### Adaptive Thinking Workaround
+
+If Claude Code feels "lazy" or gives shallow answers, you may want to disable Adaptive Thinking. Add to `~/.claude/settings.json`:
+
+```json
+{
+  "effortLevel": "high",
+  "env": {
+    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1"
+  }
+}
+```
+
+This forces full reasoning on every turn. Trade-off: consumes rate limit faster.
 
 ---
 
@@ -66,22 +124,27 @@ The installer will:
 
 ```
 Browser cookies (Firefox/Chromium)
-        │
-        ▼
+        |
+        v
 claude-usage-collector.py
-        │
-        ├──▶ claude.ai/api/organizations/{org}/usage
-        │          { five_hour, seven_day, seven_day_sonnet utilization }
-        │
-        ├──▶ claude.ai/api/organizations/{org}/prepaid/credits
-        │          { amount, currency }
-        │
-        ├──▶ status.claude.com/api/v2/summary.json
-        │          { indicator, components[], active_incidents[] }
-        │
-        ├──▶ ~/.claude/projects/**/*.jsonl  (local token data)
-        │
-        └──▶ ~/.claude/widget-data.json ──▶ Plasma Widget (QML)
+        |
+        |--- claude.ai/api/organizations/{org}/usage
+        |       { five_hour, seven_day, seven_day_sonnet utilization }
+        |
+        |--- claude.ai/api/organizations/{org}/prepaid/credits
+        |       { amount, currency }
+        |
+        |--- status.claude.com/api/v2/summary.json
+        |       { indicator, components[], active_incidents[] }
+        |
+        |--- ~/.claude/settings.json
+        |       { effortLevel, DISABLE_ADAPTIVE_THINKING }
+        |
+        |--- ~/.claude/projects/**/*.jsonl
+        |       { errors, tokens, sessions, models }
+        |
+        v
+~/.claude/widget-data.json ---> Plasma Widget (QML)
 ```
 
 ### Authentication
@@ -103,6 +166,10 @@ You must be logged in to [claude.ai](https://claude.ai) in your browser.
 | Prepaid balance | claude.ai API | Your organization |
 | Service health | status.claude.com | Anthropic infrastructure |
 | Active incidents | status.claude.com | Anthropic infrastructure |
+| Error rate | Local JSONL files | This machine only |
+| Burn rate | Local JSONL files | This machine only |
+| Adaptive Thinking | Local settings.json | This machine only |
+| Dumbness score | Composite (all above) | Combined |
 | 7-day activity chart | Local JSONL files | This machine only |
 | Lifetime stats | Local stats-cache | This machine only |
 
@@ -112,16 +179,14 @@ The widget polls `https://status.claude.com/api/v2/summary.json` every 30 second
 
 | Indicator | Label | Color |
 |-----------|-------|-------|
-| `none` | Healthy | 🟢 Green |
-| `minor` | Degraded | 🟡 Amber |
-| `major` | Major Outage | 🟠 Orange |
-| `critical` | Critical Outage | 🔴 Red |
+| `none` | Healthy | Green |
+| `minor` | Degraded | Amber |
+| `major` | Major Outage | Orange |
+| `critical` | Critical Outage | Red |
 
-Tracked components: **claude.ai · Platform · API · Claude Code · Cowork · Gov**
+Tracked components: **claude.ai - Platform - API - Claude Code - Cowork - Gov**
 
 When status changes, a **KDE desktop notification** is sent via `notify-send`.
-
-For crowd-sourced early warnings, the popup includes a **DownDetector ↗** link.
 
 ---
 
@@ -166,6 +231,12 @@ To re-run setup:
 - Your browser session may have expired — log in to claude.ai again
 - Cloudflare may be blocking requests — visit claude.ai to refresh the `cf_clearance` cookie
 
+### Claude feels "dumb" or lazy
+1. Check the Dumbness Score in the widget
+2. Try disabling Adaptive Thinking (see [workaround above](#adaptive-thinking-workaround))
+3. Check [status.claude.com](https://status.claude.com) for active incidents
+4. If session usage > 80%, wait for the 5h window to reset
+
 ### Service health shows `Unknown`
 - Check connectivity: `curl -s https://status.claude.com/api/v2/status.json`
 
@@ -186,10 +257,10 @@ kpackagetool6 --type Plasma/Applet --list | grep claude
 
 | Plan | Data shown |
 |------|-----------|
-| Max (20x) | Session %, Weekly all %, Weekly Sonnet %, Balance |
-| Max (5x) | Session %, Weekly all %, Weekly Sonnet %, Balance |
-| Pro | Session %, Weekly all % |
-| Free | Session % |
+| Max (20x) | Session %, Weekly all %, Weekly Sonnet %, Balance, Dumbness |
+| Max (5x) | Session %, Weekly all %, Weekly Sonnet %, Balance, Dumbness |
+| Pro | Session %, Weekly all %, Dumbness |
+| Free | Session %, Dumbness |
 
 ---
 
