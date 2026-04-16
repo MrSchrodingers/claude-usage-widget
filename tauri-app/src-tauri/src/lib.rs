@@ -1,7 +1,7 @@
 mod tray;
 
 use std::path::PathBuf;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 fn data_file_path() -> PathBuf {
     dirs::home_dir()
@@ -47,6 +47,28 @@ fn start_file_watcher(app: tauri::AppHandle) {
     });
 }
 
+/// Register Super+Shift+C as a global shortcut to toggle the popup window.
+/// This is a Linux/GNOME workaround: tray icon click events are not emitted
+/// due to D-Bus/SNI limitations, so this shortcut provides an alternative.
+fn register_global_shortcut(app: &tauri::AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    let app_clone = app.clone();
+    app.global_shortcut()
+        .on_shortcut("Super+Shift+KeyC", move |_app, _shortcut, _event| {
+            if let Some(window) = app_clone.get_webview_window("popup") {
+                if window.is_visible().unwrap_or(false) {
+                    let _ = window.hide();
+                } else {
+                    let _ = window.center();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        })
+        .expect("failed to register global shortcut");
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -56,6 +78,7 @@ pub fn run() {
         .setup(|app| {
             tray::create_tray(app.handle())?;
             start_file_watcher(app.handle().clone());
+            register_global_shortcut(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())
