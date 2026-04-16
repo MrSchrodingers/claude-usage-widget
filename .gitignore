@@ -6,3 +6,8 @@ __pycache__/
 .handoff/
 docs/CROSS-PLATFORM-PLAN.md
 docs/internal/
+
+# Tauri / Node / Rust
+tauri-app/node_modules/
+tauri-app/dist/
+tauri-app/src-tauri/target/
