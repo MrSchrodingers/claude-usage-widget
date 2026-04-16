@@ -215,6 +215,64 @@ def compute_window_output_tokens(model_tokens):
     return sum(t["output"] for t in model_tokens.values())
 
 
+def _get_chrome_key_windows():
+    """Get Chrome cookie decryption key on Windows.
+
+    Chrome 80+ stores AES-256-GCM key in Local State, encrypted with DPAPI.
+    Returns raw key bytes or None.
+    """
+    try:
+        import base64
+        local_state_paths = [
+            Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "User Data" / "Local State",
+            Path.home() / "AppData" / "Local" / "Chromium" / "User Data" / "Local State",
+        ]
+        for ls_path in local_state_paths:
+            if not ls_path.exists():
+                continue
+            with open(ls_path, "r", encoding="utf-8") as f:
+                local_state = json.load(f)
+            encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+            # Remove "DPAPI" prefix (5 bytes)
+            encrypted_key = encrypted_key[5:]
+            import ctypes
+            import ctypes.wintypes
+
+            class DATA_BLOB(ctypes.Structure):
+                _fields_ = [("cbData", ctypes.wintypes.DWORD),
+                            ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+            blob_in = DATA_BLOB(len(encrypted_key), ctypes.create_string_buffer(encrypted_key, len(encrypted_key)))
+            blob_out = DATA_BLOB()
+            if ctypes.windll.crypt32.CryptUnprotectData(
+                ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+            ):
+                key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+                ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+                return key
+        return None
+    except Exception:
+        return None
+
+
+def _decrypt_chrome_value_windows(encrypted_value, key):
+    """Decrypt Chrome cookie on Windows (AES-256-GCM, Chrome 80+)."""
+    if not encrypted_value or len(encrypted_value) < 4:
+        return None
+    prefix = encrypted_value[:3]
+    if prefix != b"v10":
+        return None
+    nonce = encrypted_value[3:15]
+    ciphertext_tag = encrypted_value[15:]
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        aes = AESGCM(key)
+        plaintext = aes.decrypt(nonce, ciphertext_tag, None)
+        return plaintext.decode("utf-8")
+    except Exception:
+        return None
+
+
 def _get_chrome_key(chrome_dir):
     """Derive Chrome cookie decryption key on Linux.
 
@@ -352,21 +410,44 @@ def _get_chrome_cookies():
     """Extract claude.ai cookies from Chrome/Chromium.
 
     Searches multiple browser paths and profiles, decrypts encrypted values.
+    Supports Linux, Windows, and macOS paths.
     Returns cookie string or empty string.
     """
     import sqlite3
     import shutil
+    import platform
+    import tempfile
 
-    base_dirs = [
-        Path.home() / ".config" / "google-chrome",
-        Path.home() / ".config" / "chromium",
-        Path.home() / "snap" / "chromium" / "common" / "chromium",
-        Path.home() / ".var" / "app" / "com.google.Chrome" / "config" / "google-chrome",
-        Path.home() / ".var" / "app" / "org.chromium.Chromium" / "config" / "chromium",
-    ]
+    is_win = platform.system() == "Windows"
+    is_mac = platform.system() == "Darwin"
+
+    if is_win:
+        local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        base_dirs = [
+            local / "Google" / "Chrome" / "User Data",
+            local / "Chromium" / "User Data",
+            local / "BraveSoftware" / "Brave-Browser" / "User Data",
+        ]
+    elif is_mac:
+        app_support = Path.home() / "Library" / "Application Support"
+        base_dirs = [
+            app_support / "Google" / "Chrome",
+            app_support / "Chromium",
+            app_support / "BraveSoftware" / "Brave-Browser",
+        ]
+    else:
+        base_dirs = [
+            Path.home() / ".config" / "google-chrome",
+            Path.home() / ".config" / "chromium",
+            Path.home() / "snap" / "chromium" / "common" / "chromium",
+            Path.home() / ".var" / "app" / "com.google.Chrome" / "config" / "google-chrome",
+            Path.home() / ".var" / "app" / "org.chromium.Chromium" / "config" / "chromium",
+        ]
+
     profiles = ["Default"] + [f"Profile {i}" for i in range(1, 6)]
 
     key = None  # lazily derived
+    win_key = None  # Windows AES-GCM key
 
     verbose = "--verbose" in sys.argv
     for base in base_dirs:
@@ -381,8 +462,18 @@ def _get_chrome_cookies():
             if verbose:
                 print(f"[chrome] Found cookie DB: {cookie_db}")
             try:
-                tmp_db = Path("/tmp/claude_chrome_cookies.sqlite")
+                # Copy DB + WAL/SHM files (Chrome uses WAL journal mode)
+                tmp_dir = Path(tempfile.gettempdir())
+                tmp_db = tmp_dir / "claude_chrome_cookies.sqlite"
                 shutil.copy2(cookie_db, tmp_db)
+                for suffix in ["-wal", "-shm", "-journal"]:
+                    wal_src = Path(str(cookie_db) + suffix)
+                    wal_dst = Path(str(tmp_db) + suffix)
+                    if wal_src.exists():
+                        shutil.copy2(wal_src, wal_dst)
+                        if verbose:
+                            print(f"[chrome] Copied {suffix} file")
+
                 conn = sqlite3.connect(str(tmp_db))
                 cursor = conn.execute(
                     "SELECT name, value, encrypted_value FROM cookies "
@@ -396,15 +487,26 @@ def _get_chrome_cookies():
                     if value:
                         pairs.append(f"{name}={value}")
                     elif encrypted_value:
-                        if key is None:
-                            key = _get_chrome_key(base)
-                        decrypted = _decrypt_chrome_value(encrypted_value, key)
+                        if is_win:
+                            if win_key is None:
+                                win_key = _get_chrome_key_windows()
+                            if win_key:
+                                decrypted = _decrypt_chrome_value_windows(encrypted_value, win_key)
+                            else:
+                                decrypted = None
+                        else:
+                            if key is None:
+                                key = _get_chrome_key(base)
+                            decrypted = _decrypt_chrome_value(encrypted_value, key)
                         if decrypted:
                             pairs.append(f"{name}={decrypted}")
                         elif verbose:
                             print(f"[chrome] FAILED to decrypt cookie: {name} (len={len(encrypted_value)})")
                 conn.close()
-                tmp_db.unlink(missing_ok=True)
+                # Cleanup temp files
+                for suffix in ["", "-wal", "-shm", "-journal"]:
+                    p = Path(str(tmp_db) + suffix)
+                    p.unlink(missing_ok=True)
                 if pairs:
                     if verbose:
                         print(f"[chrome] Got {len(pairs)} cookies: {[p.split('=')[0] for p in pairs]}")
@@ -419,17 +521,24 @@ def _get_chrome_cookies():
 def _get_firefox_cookies():
     """Extract claude.ai cookies from Firefox (plain text, no decryption needed).
 
-    Searches native, snap, and flatpak Firefox paths.
+    Searches native, snap, flatpak, Windows, and macOS Firefox paths.
     Returns cookie string or empty string.
     """
     import sqlite3
     import shutil
+    import platform
 
     firefox_dirs = [
+        # Linux
         Path.home() / ".mozilla" / "firefox",
         Path.home() / "snap" / "firefox" / "common" / ".mozilla" / "firefox",
         Path.home() / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox",
     ]
+    if platform.system() == "Windows":
+        appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        firefox_dirs.insert(0, appdata / "Mozilla" / "Firefox" / "Profiles")
+    elif platform.system() == "Darwin":
+        firefox_dirs.insert(0, Path.home() / "Library" / "Application Support" / "Firefox" / "Profiles")
 
     for firefox_dir in firefox_dirs:
         if not firefox_dir.exists():
