@@ -1,0 +1,3 @@
+@echo off
+echo Starting Claude Usage Monitor uninstaller...
+powershell -ExecutionPolicy Bypass -File "%~dp0uninstall.ps1"
