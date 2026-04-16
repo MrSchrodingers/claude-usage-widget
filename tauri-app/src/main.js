@@ -1,6 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { renderHeader } from "./components/header.js";
+import { renderSessionCard } from "./components/session-card.js";
+import { renderWeeklyCard } from "./components/weekly-card.js";
+import { renderHealthCard } from "./components/health-card.js";
+import { renderDumbnessCard } from "./components/dumbness-card.js";
 
 let data = {};
 
@@ -8,7 +12,9 @@ listen("widget-data", (event) => {
   try {
     data = JSON.parse(event.payload);
     render(data);
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error("Failed to parse widget data:", e);
+  }
 });
 
 getCurrentWindow().onFocusChanged(({ payload: focused }) => {
@@ -17,9 +23,8 @@ getCurrentWindow().onFocusChanged(({ payload: focused }) => {
 
 function render(d) {
   renderHeader(document.getElementById("header"), d);
-  // Placeholder for remaining cards (Tasks 7+8)
-  document.getElementById("session-card").textContent = "Session: " + (d.rateLimits?.session?.percentUsed ?? "--") + "%";
-  document.getElementById("weekly-card").textContent = "Weekly: " + (d.rateLimits?.weeklyAll?.percentUsed ?? "--") + "%";
-  document.getElementById("health-card").textContent = "Health: " + (d.serviceStatus?.description ?? "--");
-  document.getElementById("dumbness-card").textContent = "Score: " + (d.dumbness?.score ?? "--");
+  renderSessionCard(document.getElementById("session-card"), d);
+  renderWeeklyCard(document.getElementById("weekly-card"), d);
+  renderHealthCard(document.getElementById("health-card"), d);
+  renderDumbnessCard(document.getElementById("dumbness-card"), d);
 }
