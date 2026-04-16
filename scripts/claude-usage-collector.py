@@ -215,30 +215,241 @@ def compute_window_output_tokens(model_tokens):
     return sum(t["output"] for t in model_tokens.values())
 
 
-def get_claude_cookies():
-    """Extract all claude.ai cookies from Firefox for API auth."""
+def _get_chrome_key(chrome_dir):
+    """Derive Chrome cookie decryption key on Linux.
+
+    Tries GNOME Keyring, KWallet, then falls back to 'peanuts'.
+    Returns 16-byte AES key derived via PBKDF2.
+    """
+    import hashlib
+    import subprocess as _sp
+
+    password = None
+
+    # --- GNOME Keyring via secret-tool ---
+    # Try v2 then v1 schemas, for both Chrome and Chromium
+    gnome_lookups = [
+        ("chrome_libsecret_os_crypt_password_v2", "chrome"),
+        ("chrome_libsecret_os_crypt_password_v1", "chrome"),
+        ("chrome_libsecret_os_crypt_password_v2", "chromium"),
+        ("chrome_libsecret_os_crypt_password_v1", "chromium"),
+    ]
+    for schema, app in gnome_lookups:
+        if password:
+            break
+        try:
+            result = _sp.run(
+                ["secret-tool", "lookup", "xdg:schema", schema, "application", app],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                password = result.stdout.strip()
+                break
+        except (FileNotFoundError, _sp.TimeoutExpired, OSError):
+            continue
+
+    # --- KWallet ---
+    if not password:
+        kwallet_lookups = [
+            ("Chrome Safe Storage", "Chrome Keys"),
+            ("Chromium Safe Storage", "Chromium Keys"),
+        ]
+        for storage_name, folder in kwallet_lookups:
+            if password:
+                break
+            try:
+                result = _sp.run(
+                    ["kwallet-query", "--read-password", storage_name,
+                     "--folder", folder, "kdewallet"],
+                    capture_output=True, timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    password = result.stdout.strip()
+                    break
+            except (FileNotFoundError, _sp.TimeoutExpired, OSError):
+                continue
+
+    # --- Fallback ---
+    if not password:
+        password = b"peanuts"
+    elif isinstance(password, str):
+        password = password.encode("utf-8")
+
+    return hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1, dklen=16)
+
+
+def _decrypt_chrome_value(encrypted_value, key):
+    """Decrypt a Chrome encrypted cookie value.
+
+    Handles v10/v11 prefix, AES-128-CBC, PKCS7 unpadding, and
+    Chrome 130+ (DB schema >= v24) 32-byte SHA-256 integrity hash.
+    Returns decoded UTF-8 string or None.
+    """
+    if not encrypted_value or len(encrypted_value) < 4:
+        return None
+
+    # Strip v10/v11 prefix (3 bytes)
+    prefix = encrypted_value[:3]
+    if prefix not in (b"v10", b"v11"):
+        return None
+    ciphertext = encrypted_value[3:]
+
+    iv = b" " * 16  # 16 space characters
+
+    plaintext = None
+
+    # Try cryptography package first
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives.padding import PKCS7
+
+        cipher = Cipher(algorithms.AES128(key), modes.CBC(iv))
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+
+        unpadder = PKCS7(128).unpadder()
+        plaintext = unpadder.update(padded) + unpadder.finalize()
+    except ImportError:
+        # Fallback: openssl CLI
+        import subprocess as _sp
+        try:
+            result = _sp.run(
+                ["openssl", "enc", "-aes-128-cbc", "-d",
+                 "-K", key.hex(), "-iv", iv.hex(), "-nopad"],
+                input=ciphertext, capture_output=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout:
+                padded = result.stdout
+                # Manual PKCS7 unpadding
+                pad_len = padded[-1]
+                if 1 <= pad_len <= 16 and padded[-pad_len:] == bytes([pad_len]) * pad_len:
+                    plaintext = padded[:-pad_len]
+                else:
+                    plaintext = padded
+        except (FileNotFoundError, _sp.TimeoutExpired, OSError):
+            return None
+    except Exception:
+        return None
+
+    if plaintext is None:
+        return None
+
+    # Chrome 130+ (DB schema >= v24): 32-byte SHA-256 integrity hash prepended
+    if len(plaintext) > 32:
+        plaintext = plaintext[32:]
+
+    try:
+        return plaintext.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _get_chrome_cookies():
+    """Extract claude.ai cookies from Chrome/Chromium.
+
+    Searches multiple browser paths and profiles, decrypts encrypted values.
+    Returns cookie string or empty string.
+    """
     import sqlite3
     import shutil
-    firefox_dir = Path.home() / ".mozilla" / "firefox"
-    if not firefox_dir.exists():
-        return ""
-    for profile in firefox_dir.iterdir():
-        cookie_db = profile / "cookies.sqlite"
-        if cookie_db.exists():
+
+    base_dirs = [
+        Path.home() / ".config" / "google-chrome",
+        Path.home() / ".config" / "chromium",
+        Path.home() / "snap" / "chromium" / "common" / "chromium",
+        Path.home() / ".var" / "app" / "com.google.Chrome" / "config" / "google-chrome",
+        Path.home() / ".var" / "app" / "org.chromium.Chromium" / "config" / "chromium",
+    ]
+    profiles = ["Default"] + [f"Profile {i}" for i in range(1, 6)]
+
+    key = None  # lazily derived
+
+    for base in base_dirs:
+        if not base.exists():
+            continue
+        for profile in profiles:
+            cookie_db = base / profile / "Cookies"
+            if not cookie_db.exists():
+                continue
             try:
-                tmp_db = Path("/tmp/claude_cookies.sqlite")
+                tmp_db = Path("/tmp/claude_chrome_cookies.sqlite")
                 shutil.copy2(cookie_db, tmp_db)
                 conn = sqlite3.connect(str(tmp_db))
                 cursor = conn.execute(
-                    "SELECT name, value FROM moz_cookies WHERE host LIKE '%claude.ai%'"
+                    "SELECT name, value, encrypted_value FROM cookies "
+                    "WHERE host_key LIKE '%claude.ai%'"
                 )
-                pairs = [f"{name}={value}" for name, value in cursor.fetchall()]
+                pairs = []
+                for name, value, encrypted_value in cursor.fetchall():
+                    if value:
+                        pairs.append(f"{name}={value}")
+                    elif encrypted_value:
+                        if key is None:
+                            key = _get_chrome_key(base)
+                        decrypted = _decrypt_chrome_value(encrypted_value, key)
+                        if decrypted:
+                            pairs.append(f"{name}={decrypted}")
                 conn.close()
                 tmp_db.unlink(missing_ok=True)
                 if pairs:
                     return "; ".join(pairs)
             except Exception:
                 continue
+    return ""
+
+
+def _get_firefox_cookies():
+    """Extract claude.ai cookies from Firefox (plain text, no decryption needed).
+
+    Searches native, snap, and flatpak Firefox paths.
+    Returns cookie string or empty string.
+    """
+    import sqlite3
+    import shutil
+
+    firefox_dirs = [
+        Path.home() / ".mozilla" / "firefox",
+        Path.home() / "snap" / "firefox" / "common" / ".mozilla" / "firefox",
+        Path.home() / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox",
+    ]
+
+    for firefox_dir in firefox_dirs:
+        if not firefox_dir.exists():
+            continue
+        for profile in firefox_dir.iterdir():
+            cookie_db = profile / "cookies.sqlite"
+            if cookie_db.exists():
+                try:
+                    tmp_db = Path("/tmp/claude_cookies.sqlite")
+                    shutil.copy2(cookie_db, tmp_db)
+                    conn = sqlite3.connect(str(tmp_db))
+                    cursor = conn.execute(
+                        "SELECT name, value FROM moz_cookies WHERE host LIKE '%claude.ai%'"
+                    )
+                    pairs = [f"{name}={value}" for name, value in cursor.fetchall()]
+                    conn.close()
+                    tmp_db.unlink(missing_ok=True)
+                    if pairs:
+                        return "; ".join(pairs)
+                except Exception:
+                    continue
+    return ""
+
+
+def get_claude_cookies():
+    """Extract claude.ai cookies for API auth.
+
+    Tries Firefox first (plain text, fastest), then Chrome/Chromium (encrypted).
+    Returns cookie string or empty string.
+    """
+    cookies = _get_firefox_cookies()
+    if cookies:
+        return cookies
+
+    cookies = _get_chrome_cookies()
+    if cookies:
+        return cookies
+
     return ""
 
 
