@@ -1,7 +1,9 @@
+import { dumbLevelColor, dumbLevelLabel, statusColorRGB } from "../lib/theme.js";
+
 const SPRITE_MAP = {
-  genius: { prefix: "halo", frames: 6, interval: 120 },
-  smart:  { prefix: "smart", frames: 6, interval: 150 },
-  slow:   { prefix: "rain", frames: 6, interval: 150 },
+  genius: { prefix: "halo", frames: 6, interval: 250 },
+  smart:  { prefix: "smart", frames: 6, interval: 300 },
+  slow:   { prefix: "rain", frames: 6, interval: 100 },
   dumb:   { prefix: "fire", frames: 6, interval: 120 },
   braindead: { prefix: "skull", frames: 6, interval: 200 },
 };
@@ -9,6 +11,15 @@ const SPRITE_MAP = {
 let spriteFrame = 0;
 let spriteTimer = null;
 let currentLevel = null;
+
+// Easter egg state
+let tapCount = 0;
+let tapTimer = null;
+let eggStates = ["genius", "smart", "slow", "dumb", "braindead", "live"];
+let eggIndex = 0;
+let eggActive = false;
+let eggTimeout = null;
+let eggHideTimer = null;
 
 // Preload all sprite images
 for (const [, cfg] of Object.entries(SPRITE_MAP)) {
@@ -19,25 +30,37 @@ for (const [, cfg] of Object.entries(SPRITE_MAP)) {
 }
 
 export function renderHeader(el, data) {
-  const level = data.dumbness?.level ?? "genius";
-  const score = data.dumbness?.score ?? 0;
-  const source = data.rateLimits?.source === "api" ? "Live" : "Local";
-  const sourceClass = source === "Live" ? "text-green" : "text-dim";
-  const plan = data.rateLimits?.plan ?? "";
-  const labels = {
-    genius: "Genius", smart: "Smart", slow: "Slow",
-    dumb: "Dumb", braindead: "Braindead",
-  };
+  const level = eggActive ? currentLevel : (data.dumbness?.level ?? "genius");
+  const source = data.rateLimits?.source === "api" ? "Live" : "Offline";
+  const plan = data.rateLimits?.plan ?? "Max (20x)";
+  const indicator = data.serviceStatus?.indicator ?? "none";
   const prefix = SPRITE_MAP[level]?.prefix ?? "halo";
 
-  if (!el.querySelector("#mascot-img")) {
+  if (!el.querySelector("#clawd-img")) {
     const mascotDiv = document.createElement("div");
     mascotDiv.className = "mascot-container";
-    const img = document.createElement("img");
-    img.id = "mascot-img";
-    img.src = "/sprites/" + prefix + "-0.png";
-    img.alt = "Clawd mascot";
-    mascotDiv.appendChild(img);
+    mascotDiv.addEventListener("click", () => handleEasterEgg(data));
+
+    // Base Clawd character (hidden when braindead, like QML)
+    const clawd = document.createElement("img");
+    clawd.id = "clawd-img";
+    clawd.src = "/sprites/clawd.svg";
+    clawd.alt = "Clawd mascot";
+    clawd.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-45%);width:70%;height:70%;";
+    mascotDiv.appendChild(clawd);
+
+    // Sprite overlay on top of Clawd
+    const sprite = document.createElement("img");
+    sprite.id = "mascot-img";
+    sprite.src = "/sprites/" + prefix + "-0.png";
+    sprite.alt = "";
+    mascotDiv.appendChild(sprite);
+
+    const eggLbl = document.createElement("div");
+    eggLbl.id = "egg-label";
+    eggLbl.className = "egg-label";
+    eggLbl.style.display = "none";
+    mascotDiv.appendChild(eggLbl);
 
     const infoDiv = document.createElement("div");
     infoDiv.className = "header-info";
@@ -45,41 +68,105 @@ export function renderHeader(el, data) {
     el.replaceChildren(mascotDiv, infoDiv);
   }
 
+  // Toggle Clawd visibility (hidden when braindead — skull replaces him)
+  const clawdImg = el.querySelector("#clawd-img");
+  if (clawdImg) clawdImg.style.display = level === "braindead" ? "none" : "";
+
   const infoDiv = el.querySelector("#header-info");
   infoDiv.replaceChildren();
 
-  const title = document.createElement("div");
+  // Title row: "Claude" + pill badge
+  const titleRow = document.createElement("div");
+  titleRow.className = "header-title-row";
+
+  const title = document.createElement("span");
   title.className = "header-title";
-  title.textContent = "Claude Usage";
-  infoDiv.appendChild(title);
+  title.textContent = "Claude";
+  titleRow.appendChild(title);
 
-  const statusLine = document.createElement("div");
-  statusLine.className = "header-status";
-  const levelSpan = document.createElement("span");
-  levelSpan.style.color = dumbColor(level);
-  levelSpan.textContent = labels[level] ?? level;
-  const scoreSpan = document.createElement("span");
-  scoreSpan.className = "text-dim";
-  scoreSpan.textContent = " \u00B7 " + score;
-  statusLine.append(levelSpan, scoreSpan);
-  infoDiv.appendChild(statusLine);
+  // Level pill badge (like QML)
+  const pill = document.createElement("span");
+  pill.className = "pill-badge";
+  const levelText = dumbLevelLabel(level);
+  const levelClr = dumbLevelColor(level);
+  const rgb = statusColorRGB(indicator);
+  pill.style.background = "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",0.18)";
+  pill.style.color = levelClr;
+  pill.textContent = levelText;
+  titleRow.appendChild(pill);
 
+  infoDiv.appendChild(titleRow);
+
+  // Sub line: Claude logo + plan · source
   const subLine = document.createElement("div");
   subLine.className = "header-sub";
+
+  const logo = document.createElement("img");
+  logo.className = "header-sub-logo";
+  logo.src = "/sprites/claude-logo.svg";
+  logo.alt = "";
+  subLine.appendChild(logo);
+
+  const planSpan = document.createElement("span");
+  planSpan.className = "header-sub-plan";
+  planSpan.textContent = plan;
+  subLine.appendChild(planSpan);
+
+  const dot = document.createElement("span");
+  dot.className = "header-sub-dot";
+  subLine.appendChild(dot);
+
   const srcSpan = document.createElement("span");
-  srcSpan.className = sourceClass;
+  srcSpan.className = "header-sub-source";
+  srcSpan.style.color = source === "Live" ? "var(--green)" : "var(--text)";
   srcSpan.textContent = source;
   subLine.appendChild(srcSpan);
-  if (plan) {
-    subLine.appendChild(document.createTextNode(" \u00B7 " + plan));
-  }
+
   infoDiv.appendChild(subLine);
 
   startSpriteAnimation(level);
 }
 
+function handleEasterEgg(data) {
+  tapCount++;
+  if (tapTimer) clearTimeout(tapTimer);
+  tapTimer = setTimeout(() => { tapCount = 0; }, 1500);
+
+  if (tapCount >= 5) {
+    tapCount = 0;
+    eggIndex = (eggIndex + 1) % eggStates.length;
+    const state = eggStates[eggIndex];
+    const eggLbl = document.getElementById("egg-label");
+
+    if (state === "live") {
+      eggActive = false;
+      if (eggLbl) { eggLbl.textContent = "\uD83D\uDD34 Live"; eggLbl.style.display = ""; }
+    } else {
+      eggActive = true;
+      currentLevel = state;
+      if (eggLbl) {
+        eggLbl.textContent = "\uD83E\uDD5A " + state.charAt(0).toUpperCase() + state.slice(1);
+        eggLbl.style.display = "";
+      }
+      startSpriteAnimation(state);
+    }
+
+    if (eggHideTimer) clearTimeout(eggHideTimer);
+    eggHideTimer = setTimeout(() => {
+      if (eggLbl) eggLbl.style.display = "none";
+    }, 1500);
+
+    if (eggTimeout) clearTimeout(eggTimeout);
+    eggTimeout = setTimeout(() => {
+      eggActive = false;
+      eggIndex = 0;
+      if (eggLbl) eggLbl.style.display = "none";
+    }, 30000);
+  }
+}
+
 function startSpriteAnimation(level) {
-  if (level === currentLevel) return;
+  if (level === currentLevel && spriteTimer) return;
   currentLevel = level;
   if (spriteTimer) clearInterval(spriteTimer);
   spriteFrame = 0;
@@ -92,12 +179,4 @@ function startSpriteAnimation(level) {
     spriteFrame = (spriteFrame + 1) % cfg.frames;
     img.src = "/sprites/" + cfg.prefix + "-" + spriteFrame + ".png";
   }, cfg.interval);
-}
-
-function dumbColor(level) {
-  const map = {
-    genius: "var(--green)", smart: "var(--blue)", slow: "var(--amber)",
-    dumb: "var(--amber-light)", braindead: "var(--red)",
-  };
-  return map[level] || "var(--text)";
 }
