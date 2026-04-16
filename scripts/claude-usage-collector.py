@@ -600,12 +600,15 @@ def get_claude_cookies():
     Tries Firefox first (plain text, fastest), then Chrome/Chromium (encrypted).
     Returns cookie string or empty string.
     """
+    def _has_session(c):
+        return "sessionKey=" in c
+
     cookies = _get_firefox_cookies()
-    if cookies:
+    if cookies and _has_session(cookies):
         return cookies
 
     cookies = _get_chrome_cookies()
-    if cookies:
+    if cookies and _has_session(cookies):
         return cookies
 
     return ""
