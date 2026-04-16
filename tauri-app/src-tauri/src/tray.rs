@@ -28,7 +28,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                     } else {
                         let scale = window.scale_factor().unwrap_or(1.0);
                         let win_width = 400.0;
-                        let win_height = 680.0;
+                        let win_height = 900.0;
 
                         let pos = rect.position.to_logical::<f64>(scale);
                         let tray_size = rect.size.to_logical::<f64>(scale);

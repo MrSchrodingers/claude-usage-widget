@@ -14,7 +14,7 @@
         "label": "popup",
         "title": "Claude Usage",
         "width": 400,
-        "height": 680,
+        "height": 900,
         "decorations": false,
         "resizable": false,
         "skipTaskbar": true,

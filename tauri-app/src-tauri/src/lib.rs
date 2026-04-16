@@ -10,10 +10,24 @@ fn data_file_path() -> PathBuf {
         .join("widget-data.json")
 }
 
+const MAX_DATA_SIZE: u64 = 1_048_576; // 1 MB
+
 fn emit_data(app: &tauri::AppHandle) {
     let path = data_file_path();
+    // Security: check file size before reading to prevent memory exhaustion
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > MAX_DATA_SIZE {
+            eprintln!("[watcher] widget-data.json too large ({}B), skipping", meta.len());
+            return;
+        }
+    }
     if let Ok(contents) = std::fs::read_to_string(&path) {
-        let _ = app.emit("widget-data", contents);
+        // Security: validate JSON before emitting to WebView
+        if serde_json::from_str::<serde_json::Value>(&contents).is_ok() {
+            let _ = app.emit("widget-data", contents);
+        } else {
+            eprintln!("[watcher] widget-data.json is not valid JSON, skipping");
+        }
     }
 }
 

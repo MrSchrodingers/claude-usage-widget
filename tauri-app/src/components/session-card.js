@@ -1,45 +1,67 @@
 import { startCountdown } from "../lib/countdown.js";
-import { colorForPercent } from "../lib/theme.js";
+import { limitColor, barFill } from "../lib/theme.js";
 
-const RADIUS = 34;
+const RADIUS = 38;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 export function renderSessionCard(el, data) {
   const session = data.rateLimits?.session ?? {};
   const pct = session.percentUsed ?? 0;
   const resetMin = session.resetsInMinutes ?? 0;
-  const color = colorForPercent(pct);
+  const color = limitColor(pct);
+  const strokeColor = barFill(pct, "var(--amber)");
   const offset = CIRCUMFERENCE * (1 - pct / 100);
+
+  // Border color based on usage (match QML)
+  if (pct > 80) {
+    el.style.borderColor = "rgba(239,68,68,0.6)";
+  } else if (pct > 50) {
+    el.style.borderColor = "rgba(245,158,11,0.5)";
+  } else {
+    el.style.borderColor = "rgba(217,119,6,0.35)";
+  }
 
   el.replaceChildren();
 
-  const title = document.createElement("div");
-  title.className = "card-title";
-  title.textContent = "Session (5h window)";
-  el.appendChild(title);
+  // Header row: "Current session" + reset label
+  const header = document.createElement("div");
+  header.className = "session-header";
 
+  const title = document.createElement("span");
+  title.className = "session-title";
+  title.textContent = "Current session";
+  header.appendChild(title);
+
+  const resetLabel = document.createElement("span");
+  resetLabel.className = "session-reset";
+  resetLabel.id = "session-reset-label";
+  resetLabel.textContent = formatResetLabel(resetMin, 0);
+  header.appendChild(resetLabel);
+
+  el.appendChild(header);
+
+  // Centered ring
   const wrap = document.createElement("div");
   wrap.className = "session-ring-wrap";
 
-  // SVG ring
   const ringContainer = document.createElement("div");
   ringContainer.className = "ring-container";
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 80 80");
+  svg.setAttribute("viewBox", "0 0 96 96");
 
   const bgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   bgCircle.setAttribute("class", "ring-bg");
-  bgCircle.setAttribute("cx", "40");
-  bgCircle.setAttribute("cy", "40");
+  bgCircle.setAttribute("cx", "48");
+  bgCircle.setAttribute("cy", "48");
   bgCircle.setAttribute("r", String(RADIUS));
 
   const fgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   fgCircle.setAttribute("class", "ring-fg");
-  fgCircle.setAttribute("cx", "40");
-  fgCircle.setAttribute("cy", "40");
+  fgCircle.setAttribute("cx", "48");
+  fgCircle.setAttribute("cy", "48");
   fgCircle.setAttribute("r", String(RADIUS));
-  fgCircle.setAttribute("stroke", color);
+  fgCircle.setAttribute("stroke", strokeColor);
   fgCircle.setAttribute("stroke-dasharray", String(CIRCUMFERENCE));
   fgCircle.setAttribute("stroke-dashoffset", String(offset));
 
@@ -52,33 +74,28 @@ export function renderSessionCard(el, data) {
   ringLabel.textContent = Math.round(pct) + "%";
   ringContainer.appendChild(ringLabel);
 
-  // Details
-  const details = document.createElement("div");
-  details.className = "session-details";
-
-  const pctLine = document.createElement("div");
-  pctLine.className = "session-pct";
-  const pctBold = document.createElement("span");
-  pctBold.className = "fw-bold";
-  pctBold.style.color = color;
-  pctBold.textContent = pct.toFixed(1) + "%";
-  pctLine.append(pctBold, document.createTextNode(" used"));
-
-  const countdownVal = document.createElement("div");
-  countdownVal.className = "session-countdown";
-  countdownVal.id = "countdown-value";
-  countdownVal.textContent = "--:--";
-
-  const countdownLabel = document.createElement("div");
-  countdownLabel.className = "session-countdown-label";
-  countdownLabel.textContent = "until reset";
-
-  details.append(pctLine, countdownVal, countdownLabel);
-  wrap.append(ringContainer, details);
+  wrap.appendChild(ringContainer);
   el.appendChild(wrap);
 
-  startCountdown(resetMin, ({ label }) => {
-    const cdEl = document.getElementById("countdown-value");
-    if (cdEl) cdEl.textContent = label;
+  // Predictive limit alert
+  const eta = data.limitEta;
+  if (eta && eta.minutesToLimit != null && eta.minutesToLimit < 120 && eta.minutesToLimit > 0) {
+    const alert = document.createElement("div");
+    alert.className = "session-alert";
+    alert.textContent = "At current rate, limit in " + (eta.label ?? "?");
+    el.appendChild(alert);
+  }
+
+  // Start countdown and update reset label
+  startCountdown(resetMin, ({ h, m, s }) => {
+    const lbl = document.getElementById("session-reset-label");
+    if (lbl) lbl.textContent = formatResetLabel(h * 60 + m, s);
   });
+}
+
+function formatResetLabel(totalMin, sec) {
+  if (totalMin > 60) return "Resets in " + Math.floor(totalMin / 60) + "h " + (totalMin % 60) + "m";
+  if (totalMin > 0) return "Resets in " + totalMin + "m " + sec + "s";
+  if (sec > 0) return "Resets in " + sec + "s";
+  return "Rolling 5h";
 }
