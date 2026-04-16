@@ -7,6 +7,18 @@ __pycache__/
 docs/CROSS-PLATFORM-PLAN.md
 docs/internal/
 
+# Sensitive files
+.env*
+*.pem
+*.key
+*.p12
+credentials*.json
+*.sqlite*
+
+# Build logs
+tauri-build.log
+excalidraw.log
+
 # Tauri / Node / Rust
 tauri-app/node_modules/
 tauri-app/dist/

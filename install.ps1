@@ -57,7 +57,7 @@ Write-OK "Collector: $CollectorDst"
 Write-Step 3 "Setting up scheduled task (runs every 60s)..."
 $taskName = "ClaudeUsageCollector"
 $action = New-ScheduledTaskAction -Execute $python -Argument "`"$CollectorDst`""
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 365)
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration ([TimeSpan]::MaxValue)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -77,15 +77,17 @@ $tauriExe = $null
 if ($hasCargo -and $hasNode) {
     Write-Host "  Compiling... (this takes 3-8 minutes)" -ForegroundColor Gray
     Push-Location "$RepoDir\tauri-app"
-    & npm install --silent 2>$null
-    & npx tauri build 2>$null
+    $buildLog = "$RepoDir\tauri-build.log"
+    & npm install --silent *>&1 | Out-File $buildLog
+    Write-Host "  Compiling... (3-8 minutes)" -ForegroundColor Gray
+    & npx tauri build *>&1 | Out-File $buildLog -Append
     $builtExe = "src-tauri\target\release\claude-usage-tray.exe"
     if (Test-Path $builtExe) {
         Copy-Item $builtExe "$BinDir\claude-usage-tray.exe" -Force
         $tauriExe = "$BinDir\claude-usage-tray.exe"
         Write-OK "Tray app: $tauriExe"
     } else {
-        Write-Warn "Build failed. Checking for pre-built binary..."
+        Write-Warn "Build failed. See: $buildLog"
     }
     Pop-Location
 } else {
