@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { renderHeader } from "./components/header.js";
 
 let data = {};
 
@@ -7,21 +8,18 @@ listen("widget-data", (event) => {
   try {
     data = JSON.parse(event.payload);
     render(data);
-  } catch (e) {
-    console.error("Failed to parse widget data:", e);
-  }
+  } catch (e) { console.error(e); }
 });
 
-// Close popup when it loses focus
 getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-  if (!focused) {
-    getCurrentWindow().hide();
-  }
+  if (!focused) getCurrentWindow().hide();
 });
 
 function render(d) {
-  const app = document.getElementById("app");
-  const preview = JSON.stringify(d, null, 2).slice(0, 500);
-  app.textContent = preview + "...";
-  app.style.cssText = "color:#ccc;padding:16px;font-size:12px;white-space:pre;font-family:monospace;";
+  renderHeader(document.getElementById("header"), d);
+  // Placeholder for remaining cards (Tasks 7+8)
+  document.getElementById("session-card").textContent = "Session: " + (d.rateLimits?.session?.percentUsed ?? "--") + "%";
+  document.getElementById("weekly-card").textContent = "Weekly: " + (d.rateLimits?.weeklyAll?.percentUsed ?? "--") + "%";
+  document.getElementById("health-card").textContent = "Health: " + (d.serviceStatus?.description ?? "--");
+  document.getElementById("dumbness-card").textContent = "Score: " + (d.dumbness?.score ?? "--");
 }
