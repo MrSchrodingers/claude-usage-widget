@@ -1,0 +1,41 @@
+{
+  "productName": "Claude Usage Monitor",
+  "version": "1.0.0",
+  "identifier": "com.mrschrodingers.claude-usage-tray",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "popup",
+        "title": "Claude Usage",
+        "width": 400,
+        "height": 680,
+        "decorations": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false,
+        "alwaysOnTop": true,
+        "transparent": true,
+        "shadow": true
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "tooltip": "Claude Usage Monitor"
+    },
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: tauri:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}
