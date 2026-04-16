@@ -259,8 +259,8 @@ def _get_chrome_key(chrome_dir):
                 break
             try:
                 result = _sp.run(
-                    ["kwallet-query", "--read-password", storage_name,
-                     "--folder", folder, "kdewallet"],
+                    ["kwallet-query", "-r", storage_name,
+                     "-f", folder, "kdewallet"],
                     capture_output=True, timeout=5,
                 )
                 if result.returncode == 0 and result.stdout.strip():
