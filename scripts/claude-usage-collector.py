@@ -252,7 +252,9 @@ def _get_chrome_key(chrome_dir):
     if not password:
         kwallet_lookups = [
             ("Chrome Safe Storage", "Chrome Keys"),
+            ("Chrome Safe Storage", "Passwords"),
             ("Chromium Safe Storage", "Chromium Keys"),
+            ("Chromium Safe Storage", "Passwords"),
         ]
         for storage_name, folder in kwallet_lookups:
             if password:
@@ -265,6 +267,8 @@ def _get_chrome_key(chrome_dir):
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     password = result.stdout.strip()
+                    if "--verbose" in sys.argv:
+                        print(f"[chrome] Got key from KWallet: {folder}/{storage_name}")
                     break
             except (FileNotFoundError, _sp.TimeoutExpired, OSError):
                 continue
@@ -364,13 +368,18 @@ def _get_chrome_cookies():
 
     key = None  # lazily derived
 
+    verbose = "--verbose" in sys.argv
     for base in base_dirs:
         if not base.exists():
             continue
+        if verbose:
+            print(f"[chrome] Found browser dir: {base}")
         for profile in profiles:
             cookie_db = base / profile / "Cookies"
             if not cookie_db.exists():
                 continue
+            if verbose:
+                print(f"[chrome] Found cookie DB: {cookie_db}")
             try:
                 tmp_db = Path("/tmp/claude_chrome_cookies.sqlite")
                 shutil.copy2(cookie_db, tmp_db)
@@ -379,8 +388,11 @@ def _get_chrome_cookies():
                     "SELECT name, value, encrypted_value FROM cookies "
                     "WHERE host_key LIKE '%claude.ai%'"
                 )
+                rows = cursor.fetchall()
+                if verbose:
+                    print(f"[chrome] Found {len(rows)} claude.ai cookies in {profile}")
                 pairs = []
-                for name, value, encrypted_value in cursor.fetchall():
+                for name, value, encrypted_value in rows:
                     if value:
                         pairs.append(f"{name}={value}")
                     elif encrypted_value:
@@ -389,11 +401,17 @@ def _get_chrome_cookies():
                         decrypted = _decrypt_chrome_value(encrypted_value, key)
                         if decrypted:
                             pairs.append(f"{name}={decrypted}")
+                        elif verbose:
+                            print(f"[chrome] FAILED to decrypt cookie: {name} (len={len(encrypted_value)})")
                 conn.close()
                 tmp_db.unlink(missing_ok=True)
                 if pairs:
+                    if verbose:
+                        print(f"[chrome] Got {len(pairs)} cookies: {[p.split('=')[0] for p in pairs]}")
                     return "; ".join(pairs)
-            except Exception:
+            except Exception as e:
+                if verbose:
+                    print(f"[chrome] Error reading {cookie_db}: {e}")
                 continue
     return ""
 
