@@ -1,10 +1,12 @@
 # ═══════════════════════════════════════════════════
 # Claude Usage Monitor - Windows Uninstaller
+# Removes ONLY components installed by install.ps1
 # ═══════════════════════════════════════════════════
 
 $ErrorActionPreference = "SilentlyContinue"
 $BinDir = "$env:LOCALAPPDATA\ClaudeUsageMonitor"
 $ClaudeDir = "$env:USERPROFILE\.claude"
+$Removed = 0
 
 Write-Host ""
 Write-Host "=======================================" -ForegroundColor White
@@ -12,60 +14,66 @@ Write-Host "  Claude Usage Monitor - Uninstaller   " -ForegroundColor White
 Write-Host "=======================================" -ForegroundColor White
 Write-Host ""
 
-# ── Kill running tray app ──
+# ── Kill running tray app (exact process name only) ──
 $proc = Get-Process -Name "claude-usage-tray" -ErrorAction SilentlyContinue
 if ($proc) {
     $proc | Stop-Process -Force
     Write-Host "  + Stopped running tray app" -ForegroundColor Green
+    $Removed++
 }
 
-# ── Remove scheduled task ──
+# ── Remove scheduled task (only our specific task name) ──
 $task = Get-ScheduledTask -TaskName "ClaudeUsageCollector" -ErrorAction SilentlyContinue
 if ($task) {
     Unregister-ScheduledTask -TaskName "ClaudeUsageCollector" -Confirm:$false
-    Write-Host "  + Removed scheduled task" -ForegroundColor Green
+    Write-Host "  + Removed scheduled task 'ClaudeUsageCollector'" -ForegroundColor Green
+    $Removed++
 }
 
-# ── Remove startup shortcut ──
-$shortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Monitor.lnk"
-if (Test-Path $shortcut) {
-    Remove-Item $shortcut -Force
-    Write-Host "  + Removed startup shortcut" -ForegroundColor Green
+# ── Remove startup shortcut (verify it's ours before deleting) ──
+$shortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Monitor.lnk"
+if (Test-Path $shortcutPath) {
+    # Verify the shortcut points to our binary
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($shortcutPath)
+    if ($link.TargetPath -like "*claude-usage-tray*") {
+        Remove-Item $shortcutPath -Force
+        Write-Host "  + Removed startup shortcut" -ForegroundColor Green
+        $Removed++
+    }
 }
 
-# ── Remove binaries (collector + tray app) ──
+# ── Remove our install directory (only our specific directory) ──
 if (Test-Path $BinDir) {
-    Remove-Item $BinDir -Recurse -Force
-    Write-Host "  + Removed $BinDir" -ForegroundColor Green
+    # Verify it contains our files before deleting
+    if ((Test-Path "$BinDir\claude-usage-collector.py") -or (Test-Path "$BinDir\claude-usage-tray.exe")) {
+        Remove-Item $BinDir -Recurse -Force
+        Write-Host "  + Removed $BinDir" -ForegroundColor Green
+        $Removed++
+    }
 }
 
-# ── Remove data files ──
+# ── Remove only our widget data files (never touch other .claude files) ──
 $dataFiles = @("widget-data.json", "widget-config.json", "widget-status-prev.json", "widget-stats-cache.json")
-$removed = 0
+$dataRemoved = 0
 foreach ($f in $dataFiles) {
     $p = "$ClaudeDir\$f"
     if (Test-Path $p) {
         Remove-Item $p -Force
-        $removed++
+        $dataRemoved++
     }
 }
-if ($removed -gt 0) {
-    Write-Host "  + Removed $removed data files from $ClaudeDir" -ForegroundColor Green
+if ($dataRemoved -gt 0) {
+    Write-Host "  + Removed $dataRemoved widget data files" -ForegroundColor Green
+    $Removed++
 }
 
-# ── Remove temp cookie files ──
-$tempFiles = @(
-    "$env:TEMP\claude_chrome_cookies.sqlite",
-    "$env:TEMP\claude_chrome_cookies.sqlite-wal",
-    "$env:TEMP\claude_chrome_cookies.sqlite-shm",
-    "$env:TEMP\claude_chrome_cookies.sqlite-journal",
-    "$env:TEMP\claude_cookies.sqlite"
-)
-foreach ($f in $tempFiles) {
-    if (Test-Path $f) { Remove-Item $f -Force }
-}
+# ── Remove temp cookie files (only our specific pattern) ──
+$tempDir = [System.IO.Path]::GetTempPath()
+Get-ChildItem -Path $tempDir -Filter "claude_chrome_*.sqlite*" -ErrorAction SilentlyContinue | Remove-Item -Force
+Get-ChildItem -Path $tempDir -Filter "claude_ff_*.sqlite*" -ErrorAction SilentlyContinue | Remove-Item -Force
 
 Write-Host ""
-Write-Host "  Uninstall complete." -ForegroundColor Green
+Write-Host "  Uninstall complete. ($Removed components removed)" -ForegroundColor Green
 Write-Host ""
 Read-Host "Press Enter to close"

@@ -260,7 +260,7 @@ def _decrypt_chrome_value_windows(encrypted_value, key):
     if not encrypted_value or len(encrypted_value) < 4:
         return None
     prefix = encrypted_value[:3]
-    if prefix != b"v10":
+    if prefix not in (b"v10", b"v11"):
         return None
     nonce = encrypted_value[3:15]
     ciphertext_tag = encrypted_value[15:]
@@ -273,11 +273,12 @@ def _decrypt_chrome_value_windows(encrypted_value, key):
         return None
 
 
-def _get_chrome_key(chrome_dir):
-    """Derive Chrome cookie decryption key on Linux.
+def _get_chrome_key(chrome_dir, is_mac=False):
+    """Derive Chrome cookie decryption key on Linux/macOS.
 
     Tries GNOME Keyring, KWallet, then falls back to 'peanuts'.
     Returns 16-byte AES key derived via PBKDF2.
+    macOS uses 1003 iterations; Linux uses 1.
     """
     import hashlib
     import subprocess as _sp
@@ -334,10 +335,18 @@ def _get_chrome_key(chrome_dir):
     # --- Fallback ---
     if not password:
         password = b"peanuts"
-    elif isinstance(password, str):
+    if isinstance(password, str):
         password = password.encode("utf-8")
+    elif isinstance(password, bytes):
+        # Ensure consistent encoding for bytes from keyring
+        try:
+            password = password.decode("utf-8").encode("utf-8")
+        except UnicodeDecodeError:
+            pass
 
-    return hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1, dklen=16)
+    # macOS uses 1003 iterations; Linux uses 1
+    iterations = 1003 if is_mac else 1
+    return hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", iterations, dklen=16)
 
 
 def _decrypt_chrome_value(encrypted_value, key):
@@ -396,9 +405,14 @@ def _decrypt_chrome_value(encrypted_value, key):
     if plaintext is None:
         return None
 
-    # Chrome 130+ (DB schema >= v24): 32-byte SHA-256 integrity hash prepended
+    # Chrome 130+ (DB schema >= v24): 32-byte SHA-256 integrity hash prepended.
+    # Try with hash stripped first; if that fails UTF-8, try without stripping.
     if len(plaintext) > 32:
-        plaintext = plaintext[32:]
+        stripped = plaintext[32:]
+        try:
+            return stripped.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
 
     try:
         return plaintext.decode("utf-8")
@@ -444,8 +458,6 @@ def _get_chrome_cookies():
             Path.home() / ".var" / "app" / "org.chromium.Chromium" / "config" / "chromium",
         ]
 
-    profiles = ["Default"] + [f"Profile {i}" for i in range(1, 6)]
-
     key = None  # lazily derived
     win_key = None  # Windows AES-GCM key
 
@@ -455,16 +467,19 @@ def _get_chrome_cookies():
             continue
         if verbose:
             print(f"[chrome] Found browser dir: {base}")
-        for profile in profiles:
-            cookie_db = base / profile / "Cookies"
-            if not cookie_db.exists():
-                continue
+        # Dynamic profile scan: find all dirs containing a Cookies file
+        try:
+            profile_dirs = [d for d in base.iterdir() if d.is_dir() and (d / "Cookies").exists()]
+        except PermissionError:
+            continue
+        for profile_dir in profile_dirs:
+            cookie_db = profile_dir / "Cookies"
             if verbose:
                 print(f"[chrome] Found cookie DB: {cookie_db}")
+            tmp_dir = Path(tempfile.gettempdir())
+            tmp_db = tmp_dir / f"claude_chrome_{os.getpid()}.sqlite"
             try:
                 # Copy DB + WAL/SHM files (Chrome uses WAL journal mode)
-                tmp_dir = Path(tempfile.gettempdir())
-                tmp_db = tmp_dir / "claude_chrome_cookies.sqlite"
                 shutil.copy2(cookie_db, tmp_db)
                 for suffix in ["-wal", "-shm", "-journal"]:
                     wal_src = Path(str(cookie_db) + suffix)
@@ -481,7 +496,7 @@ def _get_chrome_cookies():
                 )
                 rows = cursor.fetchall()
                 if verbose:
-                    print(f"[chrome] Found {len(rows)} claude.ai cookies in {profile}")
+                    print(f"[chrome] Found {len(rows)} claude.ai cookies in {profile_dir.name}")
                 pairs = []
                 for name, value, encrypted_value in rows:
                     if value:
@@ -496,17 +511,13 @@ def _get_chrome_cookies():
                                 decrypted = None
                         else:
                             if key is None:
-                                key = _get_chrome_key(base)
+                                key = _get_chrome_key(base, is_mac=is_mac)
                             decrypted = _decrypt_chrome_value(encrypted_value, key)
                         if decrypted:
                             pairs.append(f"{name}={decrypted}")
                         elif verbose:
                             print(f"[chrome] FAILED to decrypt cookie: {name} (len={len(encrypted_value)})")
                 conn.close()
-                # Cleanup temp files
-                for suffix in ["", "-wal", "-shm", "-journal"]:
-                    p = Path(str(tmp_db) + suffix)
-                    p.unlink(missing_ok=True)
                 if pairs:
                     if verbose:
                         print(f"[chrome] Got {len(pairs)} cookies: {[p.split('=')[0] for p in pairs]}")
@@ -515,6 +526,10 @@ def _get_chrome_cookies():
                 if verbose:
                     print(f"[chrome] Error reading {cookie_db}: {e}")
                 continue
+            finally:
+                # Always cleanup temp files
+                for suffix in ["", "-wal", "-shm", "-journal"]:
+                    Path(str(tmp_db) + suffix).unlink(missing_ok=True)
     return ""
 
 
@@ -540,26 +555,42 @@ def _get_firefox_cookies():
     elif platform.system() == "Darwin":
         firefox_dirs.insert(0, Path.home() / "Library" / "Application Support" / "Firefox" / "Profiles")
 
+    import tempfile
+
     for firefox_dir in firefox_dirs:
         if not firefox_dir.exists():
             continue
-        for profile in firefox_dir.iterdir():
+        try:
+            profiles = [d for d in firefox_dir.iterdir() if d.is_dir()]
+        except PermissionError:
+            continue
+        for profile in profiles:
             cookie_db = profile / "cookies.sqlite"
-            if cookie_db.exists():
-                try:
-                    tmp_db = Path("/tmp/claude_cookies.sqlite")
-                    shutil.copy2(cookie_db, tmp_db)
-                    conn = sqlite3.connect(str(tmp_db))
-                    cursor = conn.execute(
-                        "SELECT name, value FROM moz_cookies WHERE host LIKE '%claude.ai%'"
-                    )
-                    pairs = [f"{name}={value}" for name, value in cursor.fetchall()]
-                    conn.close()
-                    tmp_db.unlink(missing_ok=True)
-                    if pairs:
-                        return "; ".join(pairs)
-                except Exception:
-                    continue
+            if not cookie_db.exists():
+                continue
+            tmp_dir = Path(tempfile.gettempdir())
+            tmp_db = tmp_dir / f"claude_ff_{os.getpid()}.sqlite"
+            try:
+                shutil.copy2(cookie_db, tmp_db)
+                # Copy WAL/SHM files (Firefox uses WAL journal mode)
+                for suffix in ["-wal", "-shm", "-journal"]:
+                    src = Path(str(cookie_db) + suffix)
+                    dst = Path(str(tmp_db) + suffix)
+                    if src.exists():
+                        shutil.copy2(src, dst)
+                conn = sqlite3.connect(str(tmp_db))
+                cursor = conn.execute(
+                    "SELECT name, value FROM moz_cookies WHERE host LIKE '%claude.ai%'"
+                )
+                pairs = [f"{name}={value}" for name, value in cursor.fetchall()]
+                conn.close()
+                if pairs:
+                    return "; ".join(pairs)
+            except Exception:
+                continue
+            finally:
+                for suffix in ["", "-wal", "-shm", "-journal"]:
+                    Path(str(tmp_db) + suffix).unlink(missing_ok=True)
     return ""
 
 
@@ -767,6 +798,7 @@ def notify_status_change(new_status):
         return
 
     import subprocess
+    import platform
 
     if new_indicator == "none":
         title = "Claude Status"
@@ -777,6 +809,12 @@ def notify_status_change(new_status):
         incidents = new_status.get("active_incidents", [])
         body = incidents[0]["name"] if incidents else new_status.get("description", "Service issue detected")
         urgency = "critical" if new_indicator in ("major", "critical") else "normal"
+
+    # Only send desktop notifications on Linux with a display server
+    if platform.system() != "Linux":
+        return
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return
 
     try:
         subprocess.run(
@@ -1336,15 +1374,23 @@ def main():
                 if state in TEST_STATES:
                     data["dumbness"] = TEST_STATES[state]
                     if state in ("slow", "dumb", "braindead"):
+                        if not data.get("serviceStatus"):
+                            data["serviceStatus"] = {"indicator": "none", "description": "", "components": [], "active_incidents": []}
                         data["serviceStatus"]["indicator"] = "minor" if state == "slow" else "major"
-                        data["rateLimits"]["session"]["percentUsed"] = 65 if state == "slow" else 84 if state == "dumb" else 95
-                        data["errorRate"]["total"] = 3 if state == "slow" else 5 if state == "dumb" else 12
+                        if data.get("rateLimits", {}).get("session"):
+                            data["rateLimits"]["session"]["percentUsed"] = 65 if state == "slow" else 84 if state == "dumb" else 95
+                        if data.get("errorRate") is not None:
+                            data["errorRate"]["total"] = 3 if state == "slow" else 5 if state == "dumb" else 12
 
-        # Atomic write
+        # Atomic write with restrictive permissions
         tmp_path = str(OUTPUT_FILE) + ".tmp"
         with open(tmp_path, "w") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, OUTPUT_FILE)
+        try:
+            os.chmod(OUTPUT_FILE, 0o600)
+        except OSError:
+            pass
         if "--verbose" in sys.argv:
             print(json.dumps(data, indent=2))
         else:

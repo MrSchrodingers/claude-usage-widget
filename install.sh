@@ -10,6 +10,7 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 COLLECTOR="$HOME/.local/bin/claude-usage-collector.py"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 TAURI_DIR="$REPO_DIR/tauri-app"
+BUILD_LOG="$REPO_DIR/tauri-build.log"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,12 +33,14 @@ detect_env() {
     HAS_RUST=false
     HAS_NODE=false
     HAS_PYTHON=false
+    HAS_SYSTEMD=false
     DISTRO="unknown"
 
     command -v python3 &>/dev/null && HAS_PYTHON=true
     command -v plasmashell &>/dev/null && HAS_KDE=true
     command -v cargo &>/dev/null && command -v rustc &>/dev/null && HAS_RUST=true
     command -v node &>/dev/null && command -v npm &>/dev/null && HAS_NODE=true
+    systemctl --user status &>/dev/null 2>&1 && HAS_SYSTEMD=true
 
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -47,6 +50,8 @@ detect_env() {
             DISTRO="debian"
         elif [[ "$ID" == "arch" ]] || [[ "${ID_LIKE:-}" == *"arch"* ]]; then
             DISTRO="arch"
+        elif [[ "$ID" == *"opensuse"* ]] || [[ "${ID_LIKE:-}" == *"suse"* ]]; then
+            DISTRO="opensuse"
         fi
     fi
 }
@@ -57,11 +62,13 @@ install_deps() {
     if ! $HAS_PYTHON; then
         echo -e "  ${RED}!${NC} Python 3 not found. Installing..."
         case $DISTRO in
-            fedora)  sudo dnf install -y python3 ;;
-            debian)  sudo apt-get install -y python3 ;;
-            arch)    sudo pacman -S --noconfirm python ;;
-            *)       echo -e "  ${RED}ERROR:${NC} Install Python 3 manually."; exit 1 ;;
+            fedora)   sudo dnf install -y python3 ;;
+            debian)   sudo apt-get install -y python3 ;;
+            arch)     sudo pacman -S --noconfirm python ;;
+            opensuse) sudo zypper install -y python3 ;;
+            *)        echo -e "  ${RED}ERROR:${NC} Unknown distro ($DISTRO). Install Python 3 manually."; exit 1 ;;
         esac
+        HAS_PYTHON=true
     fi
     echo -e "  ${GREEN}✓${NC} Python $(python3 --version 2>/dev/null | grep -oP '[\d.]+')"
 
@@ -76,16 +83,20 @@ install_deps() {
         if ! command -v kwallet-query &>/dev/null; then
             echo -e "  ${DIM}  Installing kwallet tools for Chrome cookies...${NC}"
             case $DISTRO in
-                fedora) sudo dnf install -y kwalletmanager 2>/dev/null || true ;;
-                debian) sudo apt-get install -y kwalletmanager 2>/dev/null || true ;;
+                fedora)   sudo dnf install -y kwalletmanager 2>/dev/null || true ;;
+                debian)   sudo apt-get install -y kwalletmanager 2>/dev/null || true ;;
+                opensuse) sudo zypper install -y kwalletmanager 2>/dev/null || true ;;
+                arch)     sudo pacman -S --noconfirm kwallet 2>/dev/null || true ;;
             esac
         fi
     else
         if ! command -v secret-tool &>/dev/null; then
             echo -e "  ${DIM}  Installing secret-tool for Chrome cookies...${NC}"
             case $DISTRO in
-                fedora) sudo dnf install -y libsecret 2>/dev/null || true ;;
-                debian) sudo apt-get install -y libsecret-tools 2>/dev/null || true ;;
+                fedora)   sudo dnf install -y libsecret 2>/dev/null || true ;;
+                debian)   sudo apt-get install -y libsecret-tools 2>/dev/null || true ;;
+                opensuse) sudo zypper install -y libsecret-tools 2>/dev/null || true ;;
+                arch)     sudo pacman -S --noconfirm libsecret 2>/dev/null || true ;;
             esac
         fi
     fi
@@ -102,10 +113,23 @@ install_collector() {
 
 install_timer() {
     echo ""
-    echo -e "${AMBER}[3/6]${NC} Setting up auto-refresh (systemd timer)..."
+    echo -e "${AMBER}[3/6]${NC} Setting up auto-refresh..."
+
+    if ! $HAS_SYSTEMD; then
+        echo -e "  ${AMBER}!${NC} systemd user session not available (WSL/container?)."
+        echo -e "  ${DIM}  Add to crontab manually: * * * * * python3 $COLLECTOR${NC}"
+        return
+    fi
+
     mkdir -p "$SYSTEMD_DIR"
     cp "$REPO_DIR/scripts/claude-usage-collector.service" "$SYSTEMD_DIR/"
     cp "$REPO_DIR/scripts/claude-usage-collector.timer" "$SYSTEMD_DIR/"
+
+    # Patch python path in service file to match this system
+    local PYTHON_BIN
+    PYTHON_BIN=$(command -v python3 || command -v python || echo "/usr/bin/python3")
+    sed -i "s|/usr/bin/python3|$PYTHON_BIN|g" "$SYSTEMD_DIR/claude-usage-collector.service"
+
     systemctl --user daemon-reload
     systemctl --user enable --now claude-usage-collector.timer
     echo -e "  ${GREEN}✓${NC} Timer enabled (refreshes every 30s)"
@@ -117,9 +141,11 @@ install_plasmoid() {
     echo ""
     echo -e "${AMBER}[4/6]${NC} Installing KDE Plasmoid..."
 
-    PLASMA_VER=$(plasmashell --version 2>/dev/null | grep -oP '\d+' | head -1 || echo "0")
+    local PLASMA_VER
+    PLASMA_VER=$(plasmashell --version 2>/dev/null | grep -oP '\d+' | head -1 || true)
+    PLASMA_VER=${PLASMA_VER:-0}
     if [ "$PLASMA_VER" -lt 6 ] 2>/dev/null; then
-        echo -e "  ${RED}!${NC} Plasma 6+ required (found Plasma $PLASMA_VER). Skipping plasmoid."
+        echo -e "  ${AMBER}!${NC} Plasma 6+ required (found Plasma $PLASMA_VER). Skipping plasmoid."
         return
     fi
 
@@ -127,9 +153,13 @@ install_plasmoid() {
     mkdir -p "$PLASMOID_DIR/contents/"{ui,icons,config}
     cp "$REPO_DIR/plasmoid/metadata.json" "$PLASMOID_DIR/"
     cp "$REPO_DIR/plasmoid/contents/ui/main.qml" "$PLASMOID_DIR/contents/ui/"
-    cp "$REPO_DIR/plasmoid/contents/icons/"* "$PLASMOID_DIR/contents/icons/"
+    if compgen -G "$REPO_DIR/plasmoid/contents/icons/*" > /dev/null 2>&1; then
+        cp "$REPO_DIR/plasmoid/contents/icons/"* "$PLASMOID_DIR/contents/icons/"
+    fi
     mkdir -p "$HOME/.local/share/icons/hicolor/48x48/apps/"
-    cp "$REPO_DIR/plasmoid/contents/icons/claude-logo.png" "$HOME/.local/share/icons/hicolor/48x48/apps/claude-logo.png"
+    if [ -f "$REPO_DIR/plasmoid/contents/icons/claude-logo.png" ]; then
+        cp "$REPO_DIR/plasmoid/contents/icons/claude-logo.png" "$HOME/.local/share/icons/hicolor/48x48/apps/claude-logo.png"
+    fi
 
     echo -e "  ${GREEN}✓${NC} Plasmoid installed"
     echo -e "  ${DIM}  Right-click panel → Add Widgets → 'Claude Usage Monitor'${NC}"
@@ -139,24 +169,39 @@ install_tauri() {
     echo ""
     echo -e "${AMBER}[5/6]${NC} Building tray app..."
 
+    if [ ! -d "$TAURI_DIR" ]; then
+        echo -e "  ${AMBER}!${NC} tauri-app directory not found. Skipping."
+        return
+    fi
+
     if ! $HAS_RUST; then
-        echo -e "  ${DIM}  Installing Rust toolchain...${NC}"
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet 2>/dev/null
+        echo -e "  ${DIM}  Rust not found. Installing via rustup...${NC}"
+        echo -e "  ${DIM}  (download from https://rustup.rs)${NC}"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --quiet 2>/dev/null || true
+        # shellcheck disable=SC1091
         source "$HOME/.cargo/env" 2>/dev/null || true
         if ! command -v cargo &>/dev/null; then
             echo -e "  ${RED}!${NC} Rust install failed. Skipping tray app."
+            echo -e "  ${DIM}  Install Rust manually: https://rustup.rs${NC}"
             return
         fi
+        HAS_RUST=true
     fi
 
     if ! $HAS_NODE; then
-        echo -e "  ${RED}!${NC} Node.js + npm required for tray app. Install and re-run."
-        echo -e "  ${DIM}  Fedora: sudo dnf install nodejs npm${NC}"
-        echo -e "  ${DIM}  Ubuntu: sudo apt install nodejs npm${NC}"
+        echo -e "  ${RED}!${NC} Node.js + npm required for tray app."
+        case $DISTRO in
+            fedora)   echo -e "  ${DIM}  sudo dnf install nodejs npm${NC}" ;;
+            debian)   echo -e "  ${DIM}  sudo apt install nodejs npm${NC}" ;;
+            arch)     echo -e "  ${DIM}  sudo pacman -S nodejs npm${NC}" ;;
+            opensuse) echo -e "  ${DIM}  sudo zypper install nodejs npm${NC}" ;;
+            *)        echo -e "  ${DIM}  Install Node.js from https://nodejs.org${NC}" ;;
+        esac
         return
     fi
 
     # Install Tauri build deps
+    echo -e "  ${DIM}  Installing system dependencies...${NC}"
     case $DISTRO in
         fedora)
             sudo dnf install -y webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel \
@@ -164,21 +209,28 @@ install_tauri() {
         debian)
             sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
                 librsvg2-dev libpango1.0-dev 2>/dev/null || true ;;
+        opensuse)
+            sudo zypper install -y webkit2gtk3-soup2-devel gtk3-devel libappindicator3-devel \
+                librsvg-devel pango-devel 2>/dev/null || true ;;
+        arch)
+            sudo pacman -S --noconfirm webkit2gtk-4.1 gtk3 libappindicator-gtk3 \
+                librsvg pango 2>/dev/null || true ;;
     esac
 
     cd "$TAURI_DIR"
-    npm install --silent 2>/dev/null
-    echo -e "  ${DIM}  Compiling... (this takes 2-5 minutes)${NC}"
-    npx tauri build 2>/dev/null
+    echo -e "  ${DIM}  Installing npm dependencies...${NC}"
+    npm install --silent 2>&1 | tee -a "$BUILD_LOG" > /dev/null || true
+    echo -e "  ${DIM}  Compiling Tauri app... (2-5 minutes)${NC}"
+    npx tauri build 2>&1 | tee -a "$BUILD_LOG" > /dev/null || true
 
     # Copy binary to ~/.local/bin
     local BIN="$TAURI_DIR/src-tauri/target/release/claude-usage-tray"
     if [ -f "$BIN" ]; then
         cp "$BIN" "$HOME/.local/bin/claude-usage-tray"
         chmod +x "$HOME/.local/bin/claude-usage-tray"
-        echo -e "  ${GREEN}✓${NC} Tray app installed to ~/.local/bin/claude-usage-tray"
+        echo -e "  ${GREEN}✓${NC} Tray app: ~/.local/bin/claude-usage-tray"
     else
-        echo -e "  ${RED}!${NC} Build failed. Check build logs."
+        echo -e "  ${RED}!${NC} Build failed. See: $BUILD_LOG"
     fi
 
     cd "$REPO_DIR"
@@ -196,7 +248,7 @@ setup_auth() {
     fi
 
     # Generate initial data
-    python3 "$COLLECTOR" 2>/dev/null
+    python3 "$COLLECTOR" 2>/dev/null || true
     echo -e "  ${GREEN}✓${NC} Initial data generated"
 }
 
@@ -243,7 +295,7 @@ DESKTOP
 header
 detect_env
 
-echo -e "  ${BLUE}Detected:${NC} $DISTRO | KDE=$HAS_KDE | Rust=$HAS_RUST | Node=$HAS_NODE"
+echo -e "  ${BLUE}Detected:${NC} $DISTRO | KDE=$HAS_KDE | Rust=$HAS_RUST | Node=$HAS_NODE | systemd=$HAS_SYSTEMD"
 echo ""
 
 install_deps
