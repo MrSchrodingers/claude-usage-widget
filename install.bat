@@ -1,0 +1,3 @@
+@echo off
+echo Starting Claude Usage Monitor installer...
+powershell -ExecutionPolicy Bypass -File "%~dp0install.ps1"
