@@ -54,19 +54,28 @@ fn register_global_shortcut(app: &tauri::AppHandle) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
     let app_clone = app.clone();
-    app.global_shortcut()
-        .on_shortcut("Super+Shift+KeyC", move |_app, _shortcut, _event| {
+    let result = app.global_shortcut()
+        .on_shortcut("super+shift+c", move |_app, _shortcut, _event| {
+            eprintln!("[shortcut] Super+Shift+C triggered!");
             if let Some(window) = app_clone.get_webview_window("popup") {
-                if window.is_visible().unwrap_or(false) {
+                let visible = window.is_visible().unwrap_or(false);
+                eprintln!("[shortcut] popup visible={}, toggling...", visible);
+                if visible {
                     let _ = window.hide();
                 } else {
                     let _ = window.center();
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            } else {
+                eprintln!("[shortcut] ERROR: popup window not found!");
             }
-        })
-        .expect("failed to register global shortcut");
+        });
+
+    match result {
+        Ok(_) => eprintln!("[init] Global shortcut super+shift+c registered OK"),
+        Err(e) => eprintln!("[init] Global shortcut FAILED: {}", e),
+    }
 }
 
 pub fn run() {
@@ -76,9 +85,16 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            tray::create_tray(app.handle())?;
+            eprintln!("[init] Setting up tray...");
+            match tray::create_tray(app.handle()) {
+                Ok(_) => eprintln!("[init] Tray created OK"),
+                Err(e) => eprintln!("[init] Tray FAILED: {}", e),
+            }
+            eprintln!("[init] Starting file watcher...");
             start_file_watcher(app.handle().clone());
+            eprintln!("[init] Registering global shortcut...");
             register_global_shortcut(app.handle());
+            eprintln!("[init] Setup complete!");
             Ok(())
         })
         .run(tauri::generate_context!())
