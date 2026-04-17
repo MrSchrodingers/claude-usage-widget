@@ -498,6 +498,7 @@ def _get_chrome_cookies():
                 if verbose:
                     print(f"[chrome] Found {len(rows)} claude.ai cookies in {profile_dir.name}")
                 pairs = []
+                failed = []  # cookies not decrypted by primary key (Linux/mac only)
                 for name, value, encrypted_value in rows:
                     if value:
                         pairs.append(f"{name}={value}")
@@ -515,8 +516,28 @@ def _get_chrome_cookies():
                             decrypted = _decrypt_chrome_value(encrypted_value, key)
                         if decrypted:
                             pairs.append(f"{name}={decrypted}")
-                        elif verbose:
-                            print(f"[chrome] FAILED to decrypt cookie: {name} (len={len(encrypted_value)})")
+                        else:
+                            if not is_win:
+                                failed.append((name, encrypted_value))
+                            if verbose:
+                                print(f"[chrome] FAILED to decrypt cookie: {name} (len={len(encrypted_value)})")
+
+                # Keyring key may be stale (Chrome 120+ on KDE/Wayland can fall back to
+                # "basic"/peanuts when XDG portal init fails — see os_crypt.portal in
+                # Local State). Retry failed cookies with the peanuts fallback key.
+                if failed and not pairs:
+                    import hashlib as _h
+                    iterations = 1003 if is_mac else 1
+                    peanuts_key = _h.pbkdf2_hmac("sha1", b"peanuts", b"saltysalt", iterations, dklen=16)
+                    if peanuts_key != key:
+                        if verbose:
+                            print(f"[chrome] Primary key decrypted 0 cookies — retrying with peanuts")
+                        for name, ev in failed:
+                            decrypted = _decrypt_chrome_value(ev, peanuts_key)
+                            if decrypted:
+                                pairs.append(f"{name}={decrypted}")
+                        if verbose and pairs:
+                            print(f"[chrome] Peanuts recovered {len(pairs)} cookies")
                 conn.close()
                 if pairs:
                     if verbose:
@@ -1366,7 +1387,191 @@ TEST_STATES = {
 }
 
 
+def run_health_check():
+    """Diagnose cookie extraction end-to-end and print a structured report.
+
+    Exit 0 if we can reach the live API, 1 otherwise.
+    Designed to be called by installers or manually by users after install.
+    """
+    import platform
+    report = {
+        "ok": False,
+        "source": None,
+        "firefox": {"present": False, "cookies": 0, "hasSessionKey": False, "reason": None},
+        "chrome":  {"present": False, "cookies": 0, "decrypted": 0, "keyStrategy": None, "reason": None},
+        "winner": None,
+        "advice": [],
+    }
+
+    # ── Firefox: inspect DB directly (fast, plain text) ──
+    import sqlite3, shutil, tempfile
+    firefox_dirs = [
+        Path.home() / ".mozilla" / "firefox",
+        Path.home() / "snap" / "firefox" / "common" / ".mozilla" / "firefox",
+        Path.home() / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox",
+    ]
+    if platform.system() == "Windows":
+        firefox_dirs.insert(0, Path(os.environ.get("APPDATA", Path.home())) / "Mozilla" / "Firefox" / "Profiles")
+    elif platform.system() == "Darwin":
+        firefox_dirs.insert(0, Path.home() / "Library" / "Application Support" / "Firefox" / "Profiles")
+
+    ff_cookies = _get_firefox_cookies()
+    for fd in firefox_dirs:
+        if fd.exists():
+            report["firefox"]["present"] = True
+            break
+    if ff_cookies:
+        report["firefox"]["cookies"] = ff_cookies.count("=") + (1 if ff_cookies and not ff_cookies.endswith("=") else 0)
+        report["firefox"]["cookies"] = len(ff_cookies.split("; "))
+        report["firefox"]["hasSessionKey"] = "sessionKey=" in ff_cookies
+        if not report["firefox"]["hasSessionKey"]:
+            report["firefox"]["reason"] = "cookies present but no sessionKey (not logged in or session expired)"
+    elif report["firefox"]["present"]:
+        report["firefox"]["reason"] = "profile exists but no claude.ai cookies found"
+
+    # ── Chrome: parallel path that tracks which key strategy wins ──
+    is_mac = platform.system() == "Darwin"
+    is_win = platform.system() == "Windows"
+    if is_win:
+        local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        chrome_bases = [local / "Google" / "Chrome" / "User Data",
+                        local / "Chromium" / "User Data",
+                        local / "BraveSoftware" / "Brave-Browser" / "User Data"]
+    elif is_mac:
+        asup = Path.home() / "Library" / "Application Support"
+        chrome_bases = [asup / "Google" / "Chrome", asup / "Chromium",
+                        asup / "BraveSoftware" / "Brave-Browser"]
+    else:
+        chrome_bases = [Path.home() / ".config" / "google-chrome",
+                        Path.home() / ".config" / "chromium",
+                        Path.home() / "snap" / "chromium" / "common" / "chromium",
+                        Path.home() / ".var" / "app" / "com.google.Chrome" / "config" / "google-chrome",
+                        Path.home() / ".var" / "app" / "org.chromium.Chromium" / "config" / "chromium"]
+    for cb in chrome_bases:
+        if cb.exists():
+            report["chrome"]["present"] = True
+            chrome_base = cb
+            break
+    else:
+        chrome_base = None
+
+    ch_cookies = _get_chrome_cookies()
+    if ch_cookies:
+        report["chrome"]["decrypted"] = len(ch_cookies.split("; "))
+        report["chrome"]["cookies"] = report["chrome"]["decrypted"]
+        report["chrome"]["hasSessionKey"] = "sessionKey=" in ch_cookies
+        # Detect which key strategy actually worked, for diagnostic output
+        if chrome_base and not is_win:
+            primary = _get_chrome_key(chrome_base, is_mac=is_mac)
+            import hashlib as _h
+            peanuts = _h.pbkdf2_hmac("sha1", b"peanuts", b"saltysalt", 1003 if is_mac else 1, dklen=16)
+            report["chrome"]["keyStrategy"] = "peanuts-fallback" if primary != peanuts else "peanuts"
+            # If primary isn't peanuts but the fallback recovered cookies, that's the stale-keyring case
+            if primary != peanuts:
+                # Test primary key against the first encrypted cookie to see if it actually works
+                try:
+                    import tempfile as _tf
+                    db = chrome_base / "Default" / "Cookies"
+                    if db.exists():
+                        with _tf.NamedTemporaryFile(delete=False, suffix=".sqlite") as t:
+                            shutil.copy2(db, t.name)
+                            for suf in ("-wal","-shm","-journal"):
+                                s = Path(str(db)+suf)
+                                if s.exists(): shutil.copy2(s, t.name+suf)
+                            cx = sqlite3.connect(t.name)
+                            row = cx.execute("SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND encrypted_value IS NOT NULL LIMIT 1").fetchone()
+                            cx.close()
+                        for suf in ("","-wal","-shm","-journal"):
+                            Path(t.name+suf).unlink(missing_ok=True)
+                        if row and _decrypt_chrome_value(row[0], primary):
+                            report["chrome"]["keyStrategy"] = "keyring"
+                        else:
+                            report["chrome"]["keyStrategy"] = "peanuts-fallback"
+                            report["chrome"]["reason"] = "stale keyring entry — Chrome is using basic/peanuts encryption (common on KDE/Wayland when XDG portal fails)"
+                except Exception:
+                    pass
+    elif report["chrome"]["present"]:
+        report["chrome"]["reason"] = "profile exists but no claude.ai cookies decrypted"
+
+    # ── Determine winner & API source ──
+    cookies = get_claude_cookies()
+    if cookies and "sessionKey=" in cookies:
+        # Match which browser produced the winning cookies (Firefox is tried first)
+        if ff_cookies and "sessionKey=" in ff_cookies:
+            report["winner"] = "firefox"
+        else:
+            report["winner"] = "chrome"
+        # Try hitting the API to confirm credentials aren't rejected
+        try:
+            # reuse existing rate_limits builder — source=='api' means it worked
+            rl = build_rate_limits()
+            report["source"] = rl.get("source", "local_estimate")
+            report["ok"] = report["source"] == "api"
+        except Exception as e:
+            report["source"] = "local_estimate"
+            report["advice"].append(f"API call raised {type(e).__name__}: {e}")
+    else:
+        report["source"] = "local_estimate"
+
+    # ── Build actionable advice ──
+    if report["ok"]:
+        report["advice"].append(f"Live API reachable via {report['winner']}.")
+    else:
+        if not report["firefox"]["present"] and not report["chrome"]["present"]:
+            report["advice"].append("No supported browser profile found. Install Firefox or Chrome and log in to https://claude.ai.")
+        if report["firefox"]["present"] and not report["firefox"]["hasSessionKey"]:
+            report["advice"].append("Firefox: open https://claude.ai and sign in (no sessionKey cookie found).")
+        if report["chrome"]["present"] and report["chrome"].get("keyStrategy") == "peanuts-fallback" and report["chrome"]["decrypted"] == 0:
+            report["advice"].append("Chrome: stale KWallet entry blocked decryption. Try: kwallet-query -w 'Chrome Keys' -f 'Chrome Safe Storage' kdewallet  (then restart Chrome).")
+        if report["chrome"]["present"] and report["chrome"]["decrypted"] == 0 and report["chrome"].get("reason") != "stale keyring entry — Chrome is using basic/peanuts encryption (common on KDE/Wayland when XDG portal fails)":
+            report["advice"].append("Chrome: cookies exist but couldn't be decrypted. Make sure Chrome is fully closed during collection, or try logging in again.")
+        if report["winner"] and report["source"] != "api":
+            report["advice"].append("Got cookies but API rejected them — session may be expired. Re-login at https://claude.ai.")
+
+    # Machine-readable (stdout) — installers parse this
+    if "--json" in sys.argv:
+        print(json.dumps(report, indent=2))
+    else:
+        # Human-readable summary
+        # Disable ANSI on non-TTY, Windows (pre-PS7), or NO_COLOR per spec
+        use_color = sys.stdout.isatty() and platform.system() != "Windows" and not os.environ.get("NO_COLOR")
+        if use_color:
+            GREEN, RED, AMBER, DIM, NC = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
+        else:
+            GREEN = RED = AMBER = DIM = NC = ""
+        mark = f"{GREEN}✓{NC}" if report["ok"] else f"{AMBER}!{NC}"
+        print(f"{mark} Claude Usage Collector — health check")
+        print(f"  Source: {report['source']}  Winner: {report['winner'] or 'none'}")
+        for browser in ("firefox", "chrome"):
+            b = report[browser]
+            if not b["present"]:
+                print(f"  {DIM}{browser}: not installed{NC}")
+                continue
+            status = GREEN+"OK"+NC if (browser == report["winner"]) else AMBER+"skipped"+NC if report["ok"] else RED+"failed"+NC
+            extra = []
+            if browser == "chrome" and b.get("keyStrategy"):
+                extra.append(f"key={b['keyStrategy']}")
+            if b.get("cookies"):
+                extra.append(f"cookies={b['cookies']}")
+            if b.get("decrypted") is not None and browser == "chrome":
+                extra.append(f"decrypted={b['decrypted']}")
+            # Only show reason when it's actually blocking us (not when fallback succeeded)
+            if b.get("reason") and browser != report["winner"]:
+                extra.append(f"reason={b['reason']}")
+            print(f"  {browser}: {status}  ({', '.join(extra)})" if extra else f"  {browser}: {status}")
+        if report["advice"]:
+            print()
+            for a in report["advice"]:
+                print(f"  {DIM}→{NC} {a}")
+
+    sys.exit(0 if report["ok"] else 1)
+
+
 def main():
+    if "--health-check" in sys.argv:
+        run_health_check()
+        return  # unreachable (run_health_check exits), but explicit
+
     try:
         data = build_widget_data()
 
