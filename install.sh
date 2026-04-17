@@ -240,15 +240,21 @@ setup_auth() {
     echo ""
     echo -e "${AMBER}[6/6]${NC} Testing data collection..."
 
-    if python3 "$COLLECTOR" --verbose 2>&1 | grep -q '"source": "api"'; then
-        echo -e "  ${GREEN}✓${NC} Connected to claude.ai (Live)"
-    else
-        echo -e "  ${AMBER}!${NC} Could not connect to claude.ai (Offline mode)"
-        echo -e "  ${DIM}  Make sure you're logged in to claude.ai in Firefox or Chrome${NC}"
+    # Run structured health check — surfaces silent decryption failures,
+    # stale keyring entries, and missing sessionKey with actionable advice.
+    local hc_exit=0
+    python3 "$COLLECTOR" --health-check || hc_exit=$?
+
+    if [ $hc_exit -ne 0 ]; then
+        echo ""
+        echo -e "  ${AMBER}⚠  Widget will run in Offline mode (local estimates only).${NC}"
+        echo -e "  ${DIM}  Follow the advice above, then run: ${NC}claude-usage-collector.py --health-check"
+        echo -e "  ${DIM}  to re-check without reinstalling.${NC}"
     fi
 
-    # Generate initial data
+    # Generate initial data regardless — offline mode still gives useful info
     python3 "$COLLECTOR" 2>/dev/null || true
+    echo ""
     echo -e "  ${GREEN}✓${NC} Initial data generated"
 }
 
