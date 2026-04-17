@@ -9,6 +9,7 @@ import json
 import os
 import glob
 import sys
+import ctypes
 import urllib.request
 import urllib.error
 import http.cookiejar
@@ -462,30 +463,99 @@ def _get_chrome_cookies():
     win_key = None  # Windows AES-GCM key
 
     verbose = "--verbose" in sys.argv
+
+    def _find_cookie_db(profile_dir):
+        # Chrome 108+ stores at Profile/Network/Cookies; older at Profile/Cookies
+        for rel in (Path("Network") / "Cookies", Path("Cookies")):
+            candidate = profile_dir / rel
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _copy_locked_win(src: Path, dst: Path):
+        """Copy a file that may be open exclusively by another process (Chrome).
+
+        Uses CreateFileW with FILE_SHARE_READ|WRITE|DELETE so we can open the
+        handle regardless of Chrome's lock, then ReadFile/WriteFile in chunks.
+        """
+        if not is_win:
+            shutil.copy2(src, dst)
+            return
+        GENERIC_READ = 0x80000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        FILE_SHARE_DELETE = 0x00000004
+        OPEN_EXISTING = 3
+        FILE_ATTRIBUTE_NORMAL = 0x80
+        INVALID_HANDLE_VALUE = (1 << 64) - 1  # 0xFFFFFFFFFFFFFFFF on 64-bit
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        CreateFileW = kernel32.CreateFileW
+        CreateFileW.argtypes = [
+            ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+        ]
+        CreateFileW.restype = ctypes.c_uint64
+
+        handle = CreateFileW(
+            str(src),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None,
+        )
+        if handle == INVALID_HANDLE_VALUE or handle == 0:
+            err = ctypes.get_last_error()
+            raise OSError(f"CreateFileW failed for {src}: err={err}")
+
+        try:
+            ReadFile = kernel32.ReadFile
+            ReadFile.argtypes = [
+                ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p,
+            ]
+            ReadFile.restype = ctypes.c_int
+
+            buf_size = 65536
+            buf = (ctypes.c_char * buf_size)()
+            bytes_read = ctypes.c_uint32(0)
+            with open(dst, "wb") as out:
+                while True:
+                    ok = ReadFile(handle, buf, buf_size, ctypes.byref(bytes_read), None)
+                    if not ok:
+                        raise OSError(f"ReadFile failed: err={ctypes.get_last_error()}")
+                    if bytes_read.value == 0:
+                        break
+                    out.write(bytes(buf[: bytes_read.value]))
+        finally:
+            CloseHandle = kernel32.CloseHandle
+            CloseHandle.argtypes = [ctypes.c_uint64]
+            CloseHandle.restype = ctypes.c_int
+            CloseHandle(handle)
+
     for base in base_dirs:
         if not base.exists():
             continue
         if verbose:
             print(f"[chrome] Found browser dir: {base}")
-        # Dynamic profile scan: find all dirs containing a Cookies file
+        # Dynamic profile scan: find all dirs containing a Cookies file (new or legacy layout)
         try:
-            profile_dirs = [d for d in base.iterdir() if d.is_dir() and (d / "Cookies").exists()]
+            profile_dirs = [d for d in base.iterdir() if d.is_dir() and _find_cookie_db(d) is not None]
         except PermissionError:
             continue
         for profile_dir in profile_dirs:
-            cookie_db = profile_dir / "Cookies"
+            cookie_db = _find_cookie_db(profile_dir)
             if verbose:
                 print(f"[chrome] Found cookie DB: {cookie_db}")
             tmp_dir = Path(tempfile.gettempdir())
             tmp_db = tmp_dir / f"claude_chrome_{os.getpid()}.sqlite"
             try:
-                # Copy DB + WAL/SHM files (Chrome uses WAL journal mode)
-                shutil.copy2(cookie_db, tmp_db)
+                # Copy DB + WAL/SHM files (Chrome uses WAL journal mode, file may be locked)
+                _copy_locked_win(cookie_db, tmp_db)
                 for suffix in ["-wal", "-shm", "-journal"]:
                     wal_src = Path(str(cookie_db) + suffix)
                     wal_dst = Path(str(tmp_db) + suffix)
                     if wal_src.exists():
-                        shutil.copy2(wal_src, wal_dst)
+                        _copy_locked_win(wal_src, wal_dst)
                         if verbose:
                             print(f"[chrome] Copied {suffix} file")
 
@@ -594,14 +664,47 @@ def _get_firefox_cookies():
     return ""
 
 
+def _get_manual_cookies():
+    """Read cookie from a manual file at ~/.claude/widget-cookies.txt.
+
+    Accepted formats (one line):
+      - bare value: "eyJhbGciOi..." (assumed to be sessionKey)
+      - keyed: "sessionKey=eyJ..."
+      - full string: "sessionKey=eyJ...; lastActiveOrg=abc"
+    """
+    path = CLAUDE_DIR / "widget-cookies.txt"
+    verbose = "--verbose" in sys.argv
+    if not path.exists():
+        return ""
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        if verbose:
+            print(f"[manual] read error: {e}")
+        return ""
+    if not raw:
+        return ""
+    if "sessionKey=" in raw:
+        cookies = raw
+    else:
+        cookies = f"sessionKey={raw}"
+    if verbose:
+        print(f"[manual] using widget-cookies.txt ({len(cookies)} chars)")
+    return cookies
+
+
 def get_claude_cookies():
     """Extract claude.ai cookies for API auth.
 
-    Tries Firefox first (plain text, fastest), then Chrome/Chromium (encrypted).
+    Priority: manual file → Firefox (plain text) → Chrome (encrypted, may be locked).
     Returns cookie string or empty string.
     """
     def _has_session(c):
         return "sessionKey=" in c
+
+    cookies = _get_manual_cookies()
+    if cookies and _has_session(cookies):
+        return cookies
 
     cookies = _get_firefox_cookies()
     if cookies and _has_session(cookies):
