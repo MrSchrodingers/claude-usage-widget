@@ -408,6 +408,6 @@ systemctl --user enable --now claude-usage-collector.timer
 
 <div align="center">
 
-**MIT License** | Made by [MrSchrodingers](https://github.com/MrSchrodingers)
+**MIT License** | Made by [MrSchrodingers](https://github.com/MrSchrodingers), [guizzi-glitch](https://github.com/guizzi-glitch) & [asm444](https://github.com/asm444)
 
 </div>
