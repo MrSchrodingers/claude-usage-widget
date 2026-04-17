@@ -108,15 +108,19 @@ if (-not $tauriExe) {
 
 # ── 5. First run + autostart ──
 Write-Step 5 "Testing data collection..."
-$output = & $python $CollectorDst --verbose 2>&1 | Out-String
-if ($output -match '"source": "api"') {
-    Write-OK "Connected to claude.ai (Live)"
-} else {
-    Write-Warn "Could not connect to claude.ai (Offline mode)"
-    Write-Host "  Make sure you're logged in to claude.ai in Chrome or Firefox" -ForegroundColor Gray
+
+# Structured health check — exposes silent decrypt failures and gives actionable advice
+& $python $CollectorDst --health-check
+$hcExit = $LASTEXITCODE
+if ($hcExit -ne 0) {
+    Write-Host ""
+    Write-Warn "Widget will run in Offline mode (local estimates only)."
+    Write-Host "  Follow the advice above, then run:" -ForegroundColor Gray
+    Write-Host "    python $CollectorDst --health-check" -ForegroundColor Gray
+    Write-Host "  to re-check without reinstalling." -ForegroundColor Gray
 }
 
-# Generate initial data
+# Generate initial data regardless — offline mode still gives useful info
 & $python $CollectorDst 2>$null
 Write-OK "Initial data generated at $ClaudeDir\widget-data.json"
 
