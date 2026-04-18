@@ -130,6 +130,32 @@ The Clawd mascot changes based on Claude's performance score:
 
 ## Installation
 
+### Ubuntu / Debian (any desktop)
+
+```bash
+git clone https://github.com/MrSchrodingers/claude-usage-widget.git
+cd claude-usage-widget
+chmod +x install.sh
+./install.sh
+```
+
+The installer detects your desktop environment (`XDG_CURRENT_DESKTOP`) and adapts accordingly:
+
+| DE detected | What the installer does |
+|---|---|
+| **KDE** | Builds plasmoid + tray app |
+| **GNOME** | Builds tray app, installs AppIndicator extension via `gnome-extensions-cli`. **Requires logout/login** afterwards. |
+| **MATE / XFCE / Cinnamon** | Builds tray app (native tray, no extra setup) |
+| **Hyprland / Sway** | Builds tray app (requires `waybar` tray module or equivalent) |
+
+If the tray icon doesn't appear on GNOME after relogin:
+```bash
+gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+```
+Or use `Super+Shift+C` as an always-available fallback.
+
+Every installer step prints an explicit `✓ OK`, `⚠ warning`, or `✗ failure` status — and a consolidated report at the end summarizes what worked, what was skipped with a hint, and what aborted the install. No more silent failures.
+
 ### KDE Plasmoid (Fedora, Kubuntu, Arch)
 
 ```bash
@@ -139,6 +165,11 @@ chmod +x install.sh
 ./install.sh
 ```
 
+**Arch Linux notes:**
+- The installer detects `paru` or `yay` and prefers them over `sudo pacman` when available.
+- For Arch + GNOME, follow the **Ubuntu / Debian** section above — the same installer handles both.
+- For Hyprland/Sway, ensure your bar has a tray module (`waybar`'s `tray` or `eww`).
+
 The installer will:
 1. Check Plasma 6 and Python 3
 2. Install the data collector to `~/.local/bin/`
@@ -146,6 +177,7 @@ The installer will:
 4. Set up a systemd timer (refreshes every 30s)
 5. Auto-detect your claude.ai organization from browser cookies
 6. Generate initial data
+7. Run sanity checks (binaries present, timer active, `~/.claude/` writable)
 
 #### Add to Panel
 
@@ -187,11 +219,13 @@ On Windows/macOS, run the collector via cron, Task Scheduler, or launchd.
 
 ## Browser Support
 
-| Browser | Linux | Windows | macOS |
-|---------|-------|---------|-------|
-| **Firefox** | Native, Snap, Flatpak | Native | Native |
-| **Chrome** | Native, Flatpak (encrypted via GNOME Keyring / KWallet) | Native (encrypted via DPAPI) | Plaintext only |
-| **Chromium** | Native, Snap, Flatpak (encrypted via GNOME Keyring / KWallet) | Native | Plaintext only |
+| Browser | Linux path | Windows | macOS |
+|---------|-----------|---------|-------|
+| **Firefox** (native) | `~/.mozilla/firefox/` | Native | Native |
+| **Firefox** (Snap, Ubuntu default) | `~/snap/firefox/common/.mozilla/firefox/` | — | — |
+| **Firefox** (Flatpak) | `~/.var/app/org.mozilla.firefox/.mozilla/firefox/` | — | — |
+| **Chrome** | `~/.config/google-chrome/` (encrypted via GNOME Keyring / KWallet) | Native (DPAPI) | Plaintext only |
+| **Chromium** | `~/.config/chromium/`, Snap, Flatpak (encrypted via GNOME Keyring / KWallet) | Native | Plaintext only |
 
 Priority: Firefox first (plaintext cookies, fastest), then Chrome/Chromium as fallback.
 
@@ -282,12 +316,14 @@ Both the plasmoid and Tauri app render the same sections:
 
 ### Tray App Platform Notes
 
-| Platform | Tray Click | Keyboard Shortcut |
-|----------|-----------|-------------------|
-| **Windows** | Left-click toggles popup | `Super+Shift+C` |
-| **macOS** | Left-click toggles popup | `Super+Shift+C` |
-| **Ubuntu GNOME** | Not supported (D-Bus/SNI limitation) | `Super+Shift+C` (required) |
-| **Fedora KDE** | Use the plasmoid instead | `Super+Shift+C` |
+| Platform / DE | Tray Click | Keyboard Shortcut | Setup |
+|---|---|---|---|
+| **Windows** | Left-click toggles popup | `Super+Shift+C` | — |
+| **macOS** | Left-click toggles popup | `Super+Shift+C` | — |
+| **KDE Plasma** (Kubuntu, Arch, Fedora KDE) | Use the plasmoid | `Super+Shift+C` | — |
+| **Ubuntu GNOME / Arch GNOME** | Left-click toggles popup | `Super+Shift+C` | Installer auto-installs AppIndicator extension; relogin required |
+| **Ubuntu MATE / XFCE / Cinnamon** | Left-click toggles popup | `Super+Shift+C` | Native via StatusNotifierItem |
+| **Hyprland / Sway** | Depends on bar | `Super+Shift+C` | `waybar` tray module or `eww` equivalent |
 
 ---
 
