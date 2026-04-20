@@ -842,14 +842,14 @@ def fetch_overage_data():
     if spend_limit:
         currency = spend_limit.get("currency", "USD")
         result["enabled"] = spend_limit.get("is_enabled", False)
-        result["monthlyLimit"] = spend_limit.get("monthly_credit_limit", 0) / 100
-        result["usedCredits"] = spend_limit.get("used_credits", 0) / 100
+        result["monthlyLimit"] = (spend_limit.get("monthly_credit_limit") or 0) / 100
+        result["usedCredits"] = (spend_limit.get("used_credits") or 0) / 100
         result["currency"] = currency
         result["disabledReason"] = spend_limit.get("disabled_reason", "")
         result["outOfCredits"] = spend_limit.get("out_of_credits", False)
     if credit_grant:
         result["grantAvailable"] = credit_grant.get("available", False)
-        result["grantAmount"] = credit_grant.get("amount_minor_units", 0) / 100
+        result["grantAmount"] = (credit_grant.get("amount_minor_units") or 0) / 100
         result["grantCurrency"] = credit_grant.get("currency", "USD")
     return result
 
@@ -1272,7 +1272,7 @@ def build_rate_limits():
 
         # Add credits info (full details)
         if credits_data:
-            amount = credits_data.get("amount", 0)
+            amount = credits_data.get("amount") or 0
             currency = credits_data.get("currency", "USD")
             auto_reload = credits_data.get("auto_reload_settings")
             pending = credits_data.get("pending_invoice_amount_cents")

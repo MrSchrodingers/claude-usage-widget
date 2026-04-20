@@ -15,6 +15,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from compact_bar import CompactBar  # noqa: E402
+from cookie_bridge import start_bridge_server  # noqa: E402
 from data_reader import DataReader  # noqa: E402
 from popup_window import PopupWindow  # noqa: E402
 
@@ -113,6 +114,8 @@ def main():
 
     if not _acquire_single_instance():
         sys.exit(0)
+
+    start_bridge_server()
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
