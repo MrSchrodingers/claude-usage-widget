@@ -77,7 +77,8 @@ if [ -f "$AUTOSTART" ]; then
 fi
 
 # ── Remove only our widget data files (never touch other .claude files) ──
-for f in widget-data.json widget-config.json widget-status-prev.json widget-stats-cache.json; do
+# NOTE: stats-cache.json belongs to Claude Code itself — never delete it.
+for f in widget-data.json widget-config.json widget-status-prev.json; do
     if [ -f "$HOME/.claude/$f" ]; then
         rm -f "$HOME/.claude/$f"
     fi

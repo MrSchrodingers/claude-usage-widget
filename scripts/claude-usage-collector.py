@@ -1221,36 +1221,17 @@ def build_rate_limits():
         seven_day = api_data.get("seven_day", {})
         seven_day_sonnet = api_data.get("seven_day_sonnet", {})
 
-        # Calculate reset time
-        resets_at = five_hour.get("resets_at", "")
-        reset_minutes = 0
-        if resets_at:
-            try:
-                reset_dt = datetime.fromisoformat(resets_at)
-                delta = reset_dt - now
-                reset_minutes = max(0, int(delta.total_seconds() / 60))
-            except ValueError:
-                pass
+        # Calculate reset time (parse_timestamp handles Z suffix on Python < 3.11)
+        reset_dt = parse_timestamp(five_hour.get("resets_at", ""))
+        reset_minutes = max(0, int((reset_dt - now).total_seconds() / 60)) if reset_dt else 0
 
         # Weekly all models reset
-        weekly_resets_at = seven_day.get("resets_at", "")
-        weekly_reset_label = ""
-        if weekly_resets_at:
-            try:
-                wr_dt = datetime.fromisoformat(weekly_resets_at)
-                weekly_reset_label = wr_dt.strftime("%a %I:%M %p")
-            except ValueError:
-                pass
+        wr_dt = parse_timestamp(seven_day.get("resets_at", ""))
+        weekly_reset_label = wr_dt.strftime("%a %I:%M %p") if wr_dt else ""
 
         # Weekly Sonnet reset
-        sonnet_resets_at = (seven_day_sonnet or {}).get("resets_at", "")
-        sonnet_reset_label = ""
-        if sonnet_resets_at:
-            try:
-                sr_dt = datetime.fromisoformat(sonnet_resets_at)
-                sonnet_reset_label = sr_dt.strftime("%a %I:%M %p")
-            except ValueError:
-                pass
+        sr_dt = parse_timestamp((seven_day_sonnet or {}).get("resets_at", ""))
+        sonnet_reset_label = sr_dt.strftime("%a %I:%M %p") if sr_dt else ""
 
         result = {
             "session": {

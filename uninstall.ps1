@@ -31,15 +31,20 @@ if ($task) {
 }
 
 # ── Remove startup shortcut (verify it's ours before deleting) ──
-$shortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Monitor.lnk"
-if (Test-Path $shortcutPath) {
-    # Verify the shortcut points to our binary
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($shortcutPath)
-    if ($link.TargetPath -like "*claude-usage-tray*") {
-        Remove-Item $shortcutPath -Force
-        Write-Host "  + Removed startup shortcut" -ForegroundColor Green
-        $Removed++
+# Both legacy names from install.ps1 ("Monitor") and install-windows.ps1 ("Widget")
+$startupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+foreach ($name in @("Claude Usage Monitor.lnk", "Claude Usage Widget.lnk")) {
+    $shortcutPath = "$startupDir\$name"
+    if (Test-Path $shortcutPath) {
+        $shell = New-Object -ComObject WScript.Shell
+        $link = $shell.CreateShortcut($shortcutPath)
+        $isOurs = $link.TargetPath -like "*claude-usage-tray*" -or `
+                  ($link.TargetPath -like "*python*" -and ($link.Arguments -like "*claude-usage*" -or $link.Arguments -like "*\widget\main.py*"))
+        if ($isOurs) {
+            Remove-Item $shortcutPath -Force
+            Write-Host "  + Removed startup shortcut ($name)" -ForegroundColor Green
+            $Removed++
+        }
     }
 }
 
@@ -54,7 +59,8 @@ if (Test-Path $BinDir) {
 }
 
 # ── Remove only our widget data files (never touch other .claude files) ──
-$dataFiles = @("widget-data.json", "widget-config.json", "widget-status-prev.json", "widget-stats-cache.json")
+# NOTE: stats-cache.json belongs to Claude Code itself - never delete it.
+$dataFiles = @("widget-data.json", "widget-config.json", "widget-status-prev.json")
 $dataRemoved = 0
 foreach ($f in $dataFiles) {
     $p = "$ClaudeDir\$f"

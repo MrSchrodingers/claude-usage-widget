@@ -55,9 +55,10 @@ if (Test-Path $BinDir) {
 }
 
 # Widget data files only (never touch other ~/.claude files)
+# NOTE: stats-cache.json belongs to Claude Code itself - never delete it.
 $dataFiles = @(
     "widget-data.json", "widget-config.json",
-    "widget-status-prev.json", "widget-stats-cache.json"
+    "widget-status-prev.json"
 )
 $dataRemoved = 0
 foreach ($f in $dataFiles) {
