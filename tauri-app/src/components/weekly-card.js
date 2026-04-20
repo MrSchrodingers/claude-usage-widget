@@ -11,6 +11,20 @@ export function renderWeeklyCard(el, data) {
 
   appendWeeklyRow(el, "All models", rl.weeklyAll?.percentUsed ?? 0, rl.weeklyAll?.resetsLabel, "var(--blue)");
   appendWeeklyRow(el, "Sonnet only", rl.weeklySonnet?.percentUsed ?? 0, rl.weeklySonnet?.resetsLabel, "var(--green)");
+  // Collector only emits these blocks when the API populated them, so the
+  // presence check distinguishes "metric unavailable" from a genuine zero.
+  if (rl.weeklyOpus) {
+    appendWeeklyRow(el, "Opus only", rl.weeklyOpus.percentUsed ?? 0, rl.weeklyOpus.resetsLabel, "#A855F7");
+  }
+  if (rl.weeklyDesign) {
+    appendWeeklyRow(el, "Claude Design", rl.weeklyDesign.percentUsed ?? 0, rl.weeklyDesign.resetsLabel, "#EC4899");
+  }
+  if (rl.weeklyOauthApps) {
+    appendWeeklyRow(el, "OAuth apps", rl.weeklyOauthApps.percentUsed ?? 0, rl.weeklyOauthApps.resetsLabel, "#06B6D4");
+  }
+  if (rl.weeklyCowork) {
+    appendWeeklyRow(el, "Cowork", rl.weeklyCowork.percentUsed ?? 0, rl.weeklyCowork.resetsLabel, "#F59E0B");
+  }
 }
 
 function appendWeeklyRow(parent, label, pct, resetLabel, baseColor) {

@@ -40,6 +40,9 @@ PlasmoidItem {
     readonly property color blueAccent: "#3B82F6"
     readonly property color greenAccent: "#10B981"
     readonly property color redAlert: "#EF4444"
+    readonly property color purpleAccent: "#A855F7"    // Opus
+    readonly property color pinkAccent: "#EC4899"      // Claude Design
+    readonly property color cyanAccent: "#06B6D4"      // Cowork / OAuth apps
     readonly property color cardBg: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.05)
     readonly property color subtleBorder: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08)
 
@@ -678,6 +681,178 @@ PlasmoidItem {
                                 width: parent.width * Math.min(1, pct / 100)
                                 height: parent.height; radius: 3
                                 color: barFill(pct, root.greenAccent)
+                                Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+
+                    // Opus only row (visible only when API populated the field)
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: root.usageData.rateLimits?.weeklyOpus !== undefined &&
+                                 root.usageData.rateLimits?.weeklyOpus !== null
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Rectangle { width: 8; height: 8; radius: 4; color: root.purpleAccent }
+                            PlasmaComponents3.Label {
+                                text: "Opus only"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            }
+                            Item { Layout.fillWidth: true }
+                            PlasmaComponents3.Label {
+                                visible: (root.usageData.rateLimits?.weeklyOpus?.resetsLabel ?? "") !== ""
+                                text: "Resets " + (root.usageData.rateLimits?.weeklyOpus?.resetsLabel ?? "")
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                opacity: 0.35
+                            }
+                            PlasmaComponents3.Label {
+                                property real pct: root.usageData.rateLimits?.weeklyOpus?.percentUsed ?? 0
+                                text: Math.round(pct) + "%"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.weight: Font.Bold
+                                color: limitColor(pct)
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true; height: 6; radius: 3
+                            color: root.subtleBorder
+                            Rectangle {
+                                property real pct: root.usageData.rateLimits?.weeklyOpus?.percentUsed ?? 0
+                                width: parent.width * Math.min(1, pct / 100)
+                                height: parent.height; radius: 3
+                                color: barFill(pct, root.purpleAccent)
+                                Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+
+                    // Claude Design row (API codename: omelette)
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: root.usageData.rateLimits?.weeklyDesign !== undefined &&
+                                 root.usageData.rateLimits?.weeklyDesign !== null
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Rectangle { width: 8; height: 8; radius: 4; color: root.pinkAccent }
+                            PlasmaComponents3.Label {
+                                text: "Claude Design"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            }
+                            Item { Layout.fillWidth: true }
+                            PlasmaComponents3.Label {
+                                visible: (root.usageData.rateLimits?.weeklyDesign?.resetsLabel ?? "") !== ""
+                                text: "Resets " + (root.usageData.rateLimits?.weeklyDesign?.resetsLabel ?? "")
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                opacity: 0.35
+                            }
+                            PlasmaComponents3.Label {
+                                property real pct: root.usageData.rateLimits?.weeklyDesign?.percentUsed ?? 0
+                                text: Math.round(pct) + "%"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.weight: Font.Bold
+                                color: limitColor(pct)
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true; height: 6; radius: 3
+                            color: root.subtleBorder
+                            Rectangle {
+                                property real pct: root.usageData.rateLimits?.weeklyDesign?.percentUsed ?? 0
+                                width: parent.width * Math.min(1, pct / 100)
+                                height: parent.height; radius: 3
+                                color: barFill(pct, root.pinkAccent)
+                                Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+
+                    // OAuth apps row
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: root.usageData.rateLimits?.weeklyOauthApps !== undefined &&
+                                 root.usageData.rateLimits?.weeklyOauthApps !== null
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Rectangle { width: 8; height: 8; radius: 4; color: root.cyanAccent }
+                            PlasmaComponents3.Label {
+                                text: "OAuth apps"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            }
+                            Item { Layout.fillWidth: true }
+                            PlasmaComponents3.Label {
+                                visible: (root.usageData.rateLimits?.weeklyOauthApps?.resetsLabel ?? "") !== ""
+                                text: "Resets " + (root.usageData.rateLimits?.weeklyOauthApps?.resetsLabel ?? "")
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                opacity: 0.35
+                            }
+                            PlasmaComponents3.Label {
+                                property real pct: root.usageData.rateLimits?.weeklyOauthApps?.percentUsed ?? 0
+                                text: Math.round(pct) + "%"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.weight: Font.Bold
+                                color: limitColor(pct)
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true; height: 6; radius: 3
+                            color: root.subtleBorder
+                            Rectangle {
+                                property real pct: root.usageData.rateLimits?.weeklyOauthApps?.percentUsed ?? 0
+                                width: parent.width * Math.min(1, pct / 100)
+                                height: parent.height; radius: 3
+                                color: barFill(pct, root.cyanAccent)
+                                Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+
+                    // Cowork (Claude Code teams) row
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: root.usageData.rateLimits?.weeklyCowork !== undefined &&
+                                 root.usageData.rateLimits?.weeklyCowork !== null
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Rectangle { width: 8; height: 8; radius: 4; color: root.claudeAmberLight }
+                            PlasmaComponents3.Label {
+                                text: "Cowork"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            }
+                            Item { Layout.fillWidth: true }
+                            PlasmaComponents3.Label {
+                                visible: (root.usageData.rateLimits?.weeklyCowork?.resetsLabel ?? "") !== ""
+                                text: "Resets " + (root.usageData.rateLimits?.weeklyCowork?.resetsLabel ?? "")
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                opacity: 0.35
+                            }
+                            PlasmaComponents3.Label {
+                                property real pct: root.usageData.rateLimits?.weeklyCowork?.percentUsed ?? 0
+                                text: Math.round(pct) + "%"
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.weight: Font.Bold
+                                color: limitColor(pct)
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true; height: 6; radius: 3
+                            color: root.subtleBorder
+                            Rectangle {
+                                property real pct: root.usageData.rateLimits?.weeklyCowork?.percentUsed ?? 0
+                                width: parent.width * Math.min(1, pct / 100)
+                                height: parent.height; radius: 3
+                                color: barFill(pct, root.claudeAmberLight)
                                 Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
                             }
                         }

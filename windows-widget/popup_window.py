@@ -571,6 +571,25 @@ class WeeklyCard(QFrame):
 
         self.all_row, self.all_bar, self.all_pct, self.all_reset = self._mk_row(v, "All models", COLORS["blue"])
         self.son_row, self.son_bar, self.son_pct, self.son_reset = self._mk_row(v, "Sonnet only", COLORS["green"])
+        # Optional rows — created hidden; shown on demand when the collector
+        # emits the corresponding rateLimits.weekly* block (API populated it).
+        self._optional_rows = {}
+        for key, label, color in (
+            ("weeklyOpus",       "Opus only",     "#A855F7"),
+            ("weeklyDesign",     "Claude Design", "#EC4899"),
+            ("weeklyOauthApps",  "OAuth apps",    "#06B6D4"),
+            ("weeklyCowork",     "Cowork",        "#F59E0B"),
+        ):
+            row, bar, pct, reset = self._mk_row(v, label, color)
+            widgets = [bar, pct, reset]
+            # Walk the row layout to hide the dot + label when inactive.
+            for i in range(row.count()):
+                w = row.itemAt(i).widget()
+                if w:
+                    widgets.append(w)
+            for w in widgets:
+                w.setVisible(False)
+            self._optional_rows[key] = (row, bar, pct, reset, color, widgets)
 
     def _mk_row(self, parent_layout, label, dot_color):
         section = QVBoxLayout()
@@ -614,6 +633,22 @@ class WeeklyCard(QFrame):
         self.son_pct.setStyleSheet(f"font-size:14px;font-weight:700;color:{limit_color(ws_pct)};")
         self.son_reset.setText(f"Resets {ws.get('resetsLabel') or ''}".strip())
         self.son_bar.set_value(ws_pct, bar_fill(ws_pct, COLORS["green"]))
+
+        # Optional rows (Opus, Claude Design, OAuth apps, Cowork) — hidden when
+        # the collector did not emit the block.
+        for key, (row, bar, pct_lbl, reset_lbl, color, widgets) in self._optional_rows.items():
+            payload = rl.get(key)
+            if not payload:
+                for w in widgets:
+                    w.setVisible(False)
+                continue
+            for w in widgets:
+                w.setVisible(True)
+            p = float(payload.get("percentUsed") or 0)
+            pct_lbl.setText(f"{round(p)}%")
+            pct_lbl.setStyleSheet(f"font-size:14px;font-weight:700;color:{limit_color(p)};")
+            reset_lbl.setText(f"Resets {payload.get('resetsLabel') or ''}".strip())
+            bar.set_value(p, bar_fill(p, color))
 
 
 # ── Credits Card ───────────────────────────────────────────────────
