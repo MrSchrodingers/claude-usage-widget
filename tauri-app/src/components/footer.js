@@ -44,6 +44,30 @@ export function renderFooter(el, data) {
     el.appendChild(badge);
   }
 
+  // Longest-session badge
+  const longestMs = lifetime.longestSession?.duration ?? 0;
+  if (longestMs > 60000) {
+    const mins = Math.floor(longestMs / 60000);
+    const label = mins >= 60 ? `longest ${Math.floor(mins / 60)}h${mins % 60}m` : `longest ${mins}m`;
+    const badge = document.createElement("span");
+    badge.className = "footer-streak";
+    badge.style.background = "rgba(59,130,246,0.12)";
+    badge.style.color = "#3B82F6";
+    badge.textContent = label;
+    el.appendChild(badge);
+  }
+
+  // Plugin-count badge
+  const pluginCount = data.settings?.pluginCount ?? 0;
+  if (pluginCount > 0) {
+    const badge = document.createElement("span");
+    badge.className = "footer-streak";
+    badge.style.background = "rgba(16,185,129,0.12)";
+    badge.style.color = "#10B981";
+    badge.textContent = pluginCount + " plugins";
+    el.appendChild(badge);
+  }
+
   // Spacer
   const spacer = document.createElement("span");
   spacer.className = "footer-spacer";

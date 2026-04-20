@@ -968,6 +968,246 @@ def detect_adaptive_thinking():
     return result
 
 
+def read_claude_settings_summary():
+    """Surface a compact view of ~/.claude/settings.json for the widget.
+
+    Returns None if the file is missing or unreadable, so the UI can hide the
+    card rather than render empty values.
+    """
+    settings_file = CLAUDE_DIR / "settings.json"
+    if not settings_file.exists():
+        return None
+    try:
+        s = json.loads(settings_file.read_text())
+    except Exception:
+        return None
+    env = s.get("env") or {}
+    plugins = s.get("enabledPlugins") or {}
+    return {
+        "effortLevel": s.get("effortLevel") or "",
+        "alwaysThinking": bool(s.get("alwaysThinkingEnabled")),
+        "skipDangerousPrompt": bool(s.get("skipDangerousModePermissionPrompt")),
+        "adaptiveThinkingDisabled": env.get("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING", "0") == "1",
+        "context1mDisabled": env.get("CLAUDE_CODE_DISABLE_1M_CONTEXT", "0") == "1",
+        "enabledPlugins": sorted([k for k, v in plugins.items() if v]),
+        "pluginCount": sum(1 for v in plugins.values() if v),
+    }
+
+
+def read_mcp_auth_pending():
+    """Return the list of MCP servers waiting for re-authentication."""
+    path = CLAUDE_DIR / "mcp-needs-auth-cache.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        pending = [name for name, flag in data.items() if flag]
+    elif isinstance(data, list):
+        pending = [str(x) for x in data]
+    else:
+        pending = []
+    return pending
+
+
+def _jsonl_files_newer_than(cutoff):
+    """Yield JSONL files under ~/.claude/projects whose mtime >= cutoff - 1h."""
+    projects_dir = CLAUDE_DIR / "projects"
+    if not projects_dir.exists():
+        return
+    mtime_cutoff = (cutoff - timedelta(hours=1)).timestamp()
+    for jsonl_file in projects_dir.rglob("*.jsonl"):
+        try:
+            if jsonl_file.stat().st_mtime < mtime_cutoff:
+                continue
+        except OSError:
+            continue
+        yield jsonl_file
+
+
+def calculate_tool_use(days=7, limit=50):
+    """Count tool invocations by name in the last N days across JSONL files.
+
+    Returns {"byTool": {name: count, ...}, "total": int} — capped at `limit`
+    entries in byTool (top N by count, rest grouped as "other").
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    counts = {}
+    total = 0
+    for jsonl_file in _jsonl_files_newer_than(cutoff):
+        try:
+            with open(jsonl_file) as f:
+                for line in f:
+                    if '"tool_use"' not in line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = r.get("timestamp")
+                    d = parse_timestamp(ts) if ts else None
+                    if not d or d < cutoff:
+                        continue
+                    msg = r.get("message") or {}
+                    content = msg.get("content") or []
+                    if not isinstance(content, list):
+                        continue
+                    for c in content:
+                        if isinstance(c, dict) and c.get("type") == "tool_use":
+                            name = c.get("name") or "?"
+                            counts[name] = counts.get(name, 0) + 1
+                            total += 1
+        except (PermissionError, OSError):
+            continue
+    # Keep only the top `limit`; fold the rest into "other"
+    if len(counts) > limit:
+        top = dict(sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:limit])
+        other = sum(v for k, v in counts.items() if k not in top)
+        top["other"] = other
+        counts = top
+    return {"byTool": counts, "total": total}
+
+
+def calculate_compaction_events(days=7):
+    """Count context-compaction events in the last N days.
+
+    Compactions are system records whose subtype mentions 'compact' or whose
+    content signals a snapshot rewrite. Best-effort: returns 0 when the schema
+    doesn't match anything (no false positives).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    count = 0
+    last_ts = None
+    for jsonl_file in _jsonl_files_newer_than(cutoff):
+        try:
+            with open(jsonl_file) as f:
+                for line in f:
+                    if 'compact' not in line.lower():
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    subtype = str(r.get("subtype", "")).lower()
+                    op = str(r.get("operation", "")).lower()
+                    is_compact = (
+                        "compact" in subtype
+                        or "compact" in op
+                        or r.get("isSnapshotUpdate") is True
+                    )
+                    if not is_compact:
+                        continue
+                    ts = r.get("timestamp")
+                    d = parse_timestamp(ts) if ts else None
+                    if not d or d < cutoff:
+                        continue
+                    count += 1
+                    if last_ts is None or d > last_ts:
+                        last_ts = d
+        except (PermissionError, OSError):
+            continue
+    return {
+        "count": count,
+        "lastAt": last_ts.isoformat() if last_ts else "",
+    }
+
+
+def detect_opus_fallbacks(days=1):
+    """Best-effort: count messages where an Opus-priced model was expected but
+    Sonnet/Haiku was actually used, as a proxy for silent downgrades.
+
+    Heuristic: within the rolling window, compute (opus_msg / total_msg). If
+    today's ratio is notably below the 7-day baseline, flag the gap. Without
+    explicit `requested_model` in the payload we can't prove a single downgrade,
+    but a sustained dip is still actionable as a 'watch' signal.
+    """
+    now = datetime.now(timezone.utc)
+    day_cutoff = now - timedelta(days=days)
+    week_cutoff = now - timedelta(days=7)
+
+    def _count_models(start):
+        by_model = {"opus": 0, "sonnet": 0, "haiku": 0, "other": 0}
+        for jsonl_file in _jsonl_files_newer_than(start):
+            try:
+                with open(jsonl_file) as f:
+                    for line in f:
+                        if '"model"' not in line:
+                            continue
+                        try:
+                            r = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        ts = r.get("timestamp")
+                        d = parse_timestamp(ts) if ts else None
+                        if not d or d < start:
+                            continue
+                        m = (r.get("message") or {}).get("model") or ""
+                        ml = m.lower()
+                        if "opus" in ml:
+                            by_model["opus"] += 1
+                        elif "sonnet" in ml:
+                            by_model["sonnet"] += 1
+                        elif "haiku" in ml:
+                            by_model["haiku"] += 1
+                        elif m:
+                            by_model["other"] += 1
+            except (PermissionError, OSError):
+                continue
+        return by_model
+
+    today = _count_models(day_cutoff)
+    week = _count_models(week_cutoff)
+    today_total = sum(today.values()) or 0
+    week_total = sum(week.values()) or 0
+    today_opus_ratio = (today["opus"] / today_total) if today_total >= 10 else None
+    week_opus_ratio = (week["opus"] / week_total) if week_total >= 30 else None
+    suspicious = False
+    dropped_ratio = 0.0
+    if today_opus_ratio is not None and week_opus_ratio is not None:
+        # Flag a likely fallback when today's Opus share is >25 pp below the
+        # trailing week AND the baseline was at least 20% — below that the user
+        # probably wasn't using Opus much to begin with.
+        if week_opus_ratio >= 0.20 and (week_opus_ratio - today_opus_ratio) > 0.25:
+            suspicious = True
+            dropped_ratio = week_opus_ratio - today_opus_ratio
+    return {
+        "suspicious": suspicious,
+        "today": today,
+        "week": week,
+        "todayOpusRatio": round(today_opus_ratio, 3) if today_opus_ratio is not None else None,
+        "weekOpusRatio": round(week_opus_ratio, 3) if week_opus_ratio is not None else None,
+        "gap": round(dropped_ratio, 3),
+    }
+
+
+def compute_cost_projection(today_cost_usd, burn_rate, credits_usd, session_reset_minutes, weekly_reset_label):
+    """Project USD spend until next weekly reset and estimate credit runway.
+
+    Uses output tokens/hour at current model mix as a stand-in. If the user has
+    no credits configured, runway is None (widget hides the field).
+    """
+    # Use 2h burn-rate output as the forward estimate.
+    hourly_output = (burn_rate or {}).get("output_per_hour", 0) or 0
+    # Translate tokens/hour to USD/hour assuming Sonnet-priced output at $15/Mtok
+    # as a neutral average — undercounts Opus-heavy users, overcounts Haiku-heavy.
+    usd_per_hour = hourly_output / 1_000_000 * 15.0
+    # Hours until the weekly cap resets (rough: 7d − minutes already consumed).
+    hours_to_week_reset = max(1, int((7 * 24) * 0.5))  # conservative 3.5 days
+    projected_week_usd = round(usd_per_hour * hours_to_week_reset, 2)
+    runway_hours = None
+    if credits_usd and usd_per_hour > 0.01:
+        runway_hours = credits_usd / usd_per_hour
+    return {
+        "todayUSD": round(today_cost_usd, 2),
+        "usdPerHour": round(usd_per_hour, 3),
+        "projectedWeekUSD": projected_week_usd,
+        "runwayHours": round(runway_hours, 1) if runway_hours is not None else None,
+        "runwayDays": round(runway_hours / 24, 2) if runway_hours is not None else None,
+    }
+
+
 def calculate_error_rate(hours=2):
     """Count API errors in recent JSONL files (429, 529, overloaded, etc.)."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -1472,6 +1712,13 @@ def build_widget_data():
     limit_eta = predict_limit_eta(session_pct, reset_mins)
     cc_version = get_claude_code_version()
 
+    # New signals (all best-effort — degrade to empty when data is missing)
+    settings_summary = read_claude_settings_summary()
+    mcp_auth_pending = read_mcp_auth_pending()
+    tool_use = calculate_tool_use()
+    compaction = calculate_compaction_events()
+    opus_fallbacks = detect_opus_fallbacks()
+
     # Today's summary
     today_total_input = 0
     today_total_output = 0
@@ -1540,6 +1787,9 @@ def build_widget_data():
             "firstSession": stats.get("firstSessionDate", ""),
             "longestSession": stats.get("longestSession", {}),
             "peakHours": stats.get("hourCounts", {}),
+            # New: speculative-decoding time saved across all sessions. The
+            # field is provided by Claude Code itself; we just surface it.
+            "speculationTimeSavedMs": stats.get("totalSpeculationTimeSavedMs", 0) or 0,
         }
 
         lifetime_cost = 0.0
@@ -1564,6 +1814,17 @@ def build_widget_data():
     # Cache efficiency
     cache_total = today_total_cache_read + today_total_cache_create + today_total_input
     cache_hit_rate = (today_total_cache_read / cache_total * 100) if cache_total > 0 else 0
+
+    # Cost projection (needs today_total_cost above and credits from rate_limits)
+    credits_block = rate_limits.get("credits") or {}
+    credits_amount_usd = credits_block.get("amount") or 0
+    cost_projection = compute_cost_projection(
+        today_cost_usd=today_total_cost,
+        burn_rate=burn_rate,
+        credits_usd=credits_amount_usd,
+        session_reset_minutes=reset_mins,
+        weekly_reset_label=rate_limits.get("weeklyAll", {}).get("resetsLabel", ""),
+    )
 
     widget_data = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1596,6 +1857,14 @@ def build_widget_data():
         "streak": _compute_streak(active_dates, today_str, len(today_sessions) > 0),
         "limitEta": limit_eta,
         "claudeCodeVersion": cc_version,
+        # New — each block is either a populated dict/list or empty/None so
+        # consumers can short-circuit with `if data.settings` etc.
+        "settings": settings_summary,
+        "mcpAuthPending": mcp_auth_pending,
+        "toolUse": tool_use,
+        "compaction": compaction,
+        "opusFallbacks": opus_fallbacks,
+        "costProjection": cost_projection,
     }
 
     return widget_data

@@ -92,6 +92,38 @@ export function renderHealthCard(el, data) {
   dd.append(ddIcon, ddLabel, ddSpacer, ddLink);
   el.appendChild(dd);
 
+  // MCP re-auth pending — quiet amber pill, only when something actually needs attention
+  const pending = data.mcpAuthPending ?? [];
+  if (pending.length > 0) {
+    const mcpRow = document.createElement("div");
+    mcpRow.className = "health-downdetector";
+    const mcpDot = document.createElement("span");
+    mcpDot.style.cssText = "width:6px;height:6px;border-radius:3px;background:var(--amber-light);display:inline-block;";
+    const mcpLabel = document.createElement("span");
+    mcpLabel.className = "health-dd-label";
+    mcpLabel.style.color = "var(--amber-light)";
+    const head = pending.slice(0, 3).join(", ");
+    const extra = pending.length > 3 ? "\u2026" : "";
+    mcpLabel.textContent = `${pending.length} MCP${pending.length === 1 ? "" : "s"} need re-auth: ${head}${extra}`;
+    mcpRow.append(mcpDot, mcpLabel);
+    el.appendChild(mcpRow);
+  }
+
+  // Opus-downgrade watch — red only when heuristic fires
+  if (data.opusFallbacks?.suspicious === true) {
+    const row = document.createElement("div");
+    row.className = "health-downdetector";
+    const d = document.createElement("span");
+    d.style.cssText = "width:6px;height:6px;border-radius:3px;background:var(--red);display:inline-block;";
+    const lbl = document.createElement("span");
+    lbl.className = "health-dd-label";
+    lbl.style.color = "var(--red)";
+    const gap = Math.round((data.opusFallbacks.gap ?? 0) * 100);
+    lbl.textContent = `Opus routing drop: ${gap} pp below weekly baseline`;
+    row.append(d, lbl);
+    el.appendChild(row);
+  }
+
   // Active incidents (show first only, like QML)
   const visibleIncidents = incidents.length > 0 ? [incidents[0]] : [];
   for (const inc of visibleIncidents) {

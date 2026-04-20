@@ -1166,6 +1166,42 @@ PlasmoidItem {
                         }
                     }
 
+                    // MCP re-auth pending — silent until something actually needs attention
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: (root.usageData.mcpAuthPending ?? []).length > 0
+
+                        Rectangle { width: 6; height: 6; radius: 3; color: root.claudeAmberLight }
+
+                        PlasmaComponents3.Label {
+                            property var pending: root.usageData.mcpAuthPending ?? []
+                            text: pending.length + " MCP" + (pending.length === 1 ? "" : "s") + " need re-auth: " + pending.slice(0, 3).join(", ") + (pending.length > 3 ? "…" : "")
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            color: root.claudeAmberLight
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    // Opus downgrade watch — suppressed unless the heuristic actually fires
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: root.usageData.opusFallbacks?.suspicious === true
+
+                        Rectangle { width: 6; height: 6; radius: 3; color: root.redAlert }
+
+                        PlasmaComponents3.Label {
+                            property real gap: root.usageData.opusFallbacks?.gap ?? 0
+                            text: "Opus routing drop: " + Math.round(gap * 100) + " pp below weekly baseline"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            color: root.redAlert
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                    }
+
                     // Active incident details
                     Repeater {
                         model: root.activeIncidents
@@ -1431,6 +1467,78 @@ PlasmoidItem {
                         }
                     }
 
+                    // Cache hit rate — the single most actionable efficiency signal
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.today?.cacheHitRate ?? 0) > 0
+                        Kirigami.Icon { source: "drive-harddisk"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label { text: "Cache hit"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            property real hit: root.usageData.today?.cacheHitRate ?? 0
+                            text: hit.toFixed(0) + "%"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            // >60% = great (green), 15–60% = ok (neutral), <15% = leverage opportunity (amber)
+                            color: hit >= 60 ? root.greenAccent : hit >= 15 ? Kirigami.Theme.textColor : root.claudeAmberLight
+                        }
+                    }
+
+                    // Today's cost + runway — only when we have credits info to project against
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.today?.costUSD ?? 0) > 0 || (root.usageData.costProjection?.runwayDays ?? null) !== null
+                        Kirigami.Icon { source: "office-chart-bar"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label { text: "Cost today"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            property real usd: root.usageData.today?.costUSD ?? 0
+                            property var runway: root.usageData.costProjection?.runwayDays ?? null
+                            text: {
+                                var base = "$" + usd.toFixed(2);
+                                if (runway !== null && runway < 14) base += " · " + runway.toFixed(1) + "d left";
+                                return base;
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            color: (runway !== null && runway < 2) ? root.redAlert
+                                 : (runway !== null && runway < 7) ? root.claudeAmberLight
+                                 : Kirigami.Theme.textColor
+                        }
+                    }
+
+                    // Context compactions — only visible when one or more happened
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.compaction?.count ?? 0) > 0
+                        Kirigami.Icon { source: "view-list-compact"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label { text: "Compactions (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            property int c: root.usageData.compaction?.count ?? 0
+                            text: c
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            color: c >= 3 ? root.claudeAmberLight : Kirigami.Theme.textColor
+                        }
+                    }
+
+                    // Top tools used (compact top-3)
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        visible: (root.usageData.toolUse?.total ?? 0) > 0
+                        Kirigami.Icon { source: "system-run"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
+                        PlasmaComponents3.Label { text: "Top tools (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        Item { Layout.fillWidth: true }
+                        PlasmaComponents3.Label {
+                            text: {
+                                var by = root.usageData.toolUse?.byTool ?? {};
+                                var entries = Object.keys(by).map(function(k) { return [k, by[k]]; });
+                                entries.sort(function(a, b) { return b[1] - a[1]; });
+                                return entries.slice(0, 3).map(function(e) { return e[0]; }).join(" · ");
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            elide: Text.ElideRight; Layout.maximumWidth: 180
+                        }
+                    }
+
                     // Model distribution bar
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 4
@@ -1685,6 +1793,41 @@ PlasmoidItem {
                         text: (root.usageData.streak?.days ?? 0) + "d streak"
                         font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
                         font.weight: Font.Bold; color: root.claudeAmber
+                    }
+                }
+
+                // Longest-session badge (compact, only when data known)
+                Rectangle {
+                    visible: (root.usageData.lifetime?.longestSession?.duration ?? 0) > 60000
+                    radius: height / 2
+                    color: Qt.rgba(root.blueAccent.r, root.blueAccent.g, root.blueAccent.b, 0.12)
+                    implicitWidth: _longestLbl.implicitWidth + 10
+                    implicitHeight: _longestLbl.implicitHeight + 4
+                    PlasmaComponents3.Label {
+                        id: _longestLbl; anchors.centerIn: parent
+                        text: {
+                            var ms = root.usageData.lifetime?.longestSession?.duration ?? 0;
+                            var mins = Math.floor(ms / 60000);
+                            if (mins >= 60) return "longest " + Math.floor(mins / 60) + "h" + (mins % 60) + "m";
+                            return "longest " + mins + "m";
+                        }
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                        font.weight: Font.Bold; color: root.blueAccent
+                    }
+                }
+
+                // Plugin-count pill — useful signal of tooling leverage
+                Rectangle {
+                    visible: (root.usageData.settings?.pluginCount ?? 0) > 0
+                    radius: height / 2
+                    color: Qt.rgba(root.greenAccent.r, root.greenAccent.g, root.greenAccent.b, 0.12)
+                    implicitWidth: _pluginLbl.implicitWidth + 10
+                    implicitHeight: _pluginLbl.implicitHeight + 4
+                    PlasmaComponents3.Label {
+                        id: _pluginLbl; anchors.centerIn: parent
+                        text: (root.usageData.settings?.pluginCount ?? 0) + " plugins"
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                        font.weight: Font.Bold; color: root.greenAccent
                     }
                 }
 

@@ -43,6 +43,40 @@ export function renderActivityCard(el, data) {
     appendRow(el, "\u23F1", "Avg latency", lat.toFixed(1) + "s", latColor);
   }
 
+  // Cache hit rate — green above 60%, neutral in the 15–60 band, amber below
+  const hit = data.today?.cacheHitRate ?? 0;
+  if (hit > 0) {
+    const hitColor = hit >= 60 ? "var(--green)" : hit >= 15 ? "var(--text)" : "var(--amber-light)";
+    appendRow(el, "\uD83D\uDCBE", "Cache hit", Math.round(hit) + "%", hitColor);
+  }
+
+  // Today's cost + runway (runway only shown when credits narrow the horizon)
+  const usd = data.today?.costUSD ?? 0;
+  const runwayDays = data.costProjection?.runwayDays ?? null;
+  if (usd > 0 || runwayDays !== null) {
+    let text = "$" + usd.toFixed(2);
+    if (runwayDays !== null && runwayDays < 14) text += " · " + runwayDays.toFixed(1) + "d left";
+    const color = (runwayDays !== null && runwayDays < 2) ? "var(--red)"
+                : (runwayDays !== null && runwayDays < 7) ? "var(--amber-light)"
+                : "var(--text)";
+    appendRow(el, "\uD83D\uDCCA", "Cost today", text, color);
+  }
+
+  // Compaction events (only when ≥1)
+  const compCount = data.compaction?.count ?? 0;
+  if (compCount > 0) {
+    const color = compCount >= 3 ? "var(--amber-light)" : "var(--text)";
+    appendRow(el, "\uD83D\uDDC3", "Compactions (7d)", String(compCount), color);
+  }
+
+  // Top tools (compact top-3)
+  const byTool = data.toolUse?.byTool ?? {};
+  const toolTotal = data.toolUse?.total ?? 0;
+  if (toolTotal > 0) {
+    const top3 = Object.entries(byTool).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k).join(" · ");
+    appendRow(el, "\uD83D\uDEE0", "Top tools (7d)", top3, "var(--text)");
+  }
+
   // Model distribution stacked bar
   const models = data.modelBreakdown ?? [];
   if (models.length > 0) {

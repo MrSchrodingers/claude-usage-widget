@@ -1004,6 +1004,47 @@ class ActivityCard(QFrame):
             lat_c = COLORS["green"] if lat < 10 else COLORS["amber_light"] if lat < 30 else COLORS["red"]
             self._row("\u23F1", "Avg latency", f"{lat:.1f}s", lat_c)
 
+        # Cache hit rate
+        hit = float((data.get("today") or {}).get("cacheHitRate") or 0)
+        if hit > 0:
+            hit_c = COLORS["green"] if hit >= 60 else COLORS["text"] if hit >= 15 else COLORS["amber_light"]
+            self._row("\U0001F4BE", "Cache hit", f"{round(hit)}%", hit_c)
+
+        # Cost today + runway
+        today_usd = float((data.get("today") or {}).get("costUSD") or 0)
+        runway_days = (data.get("costProjection") or {}).get("runwayDays")
+        if today_usd > 0 or runway_days is not None:
+            text = f"${today_usd:.2f}"
+            if isinstance(runway_days, (int, float)) and runway_days < 14:
+                text += f" · {runway_days:.1f}d left"
+            color = COLORS["red"] if isinstance(runway_days, (int, float)) and runway_days < 2 \
+                else COLORS["amber_light"] if isinstance(runway_days, (int, float)) and runway_days < 7 \
+                else COLORS["text"]
+            self._row("\U0001F4CA", "Cost today", text, color)
+
+        # Compaction events (7d)
+        comp_count = int((data.get("compaction") or {}).get("count") or 0)
+        if comp_count > 0:
+            comp_c = COLORS["amber_light"] if comp_count >= 3 else COLORS["text"]
+            self._row("\U0001F5C3", "Compactions (7d)", str(comp_count), comp_c)
+
+        # Top tools (7d)
+        by_tool = (data.get("toolUse") or {}).get("byTool") or {}
+        if (data.get("toolUse") or {}).get("total"):
+            top3 = " · ".join([k for k, _ in sorted(by_tool.items(), key=lambda kv: kv[1], reverse=True)[:3]])
+            self._row("\U0001F6E0", "Top tools (7d)", top3, COLORS["text"])
+
+        # MCP re-auth pending
+        pending = data.get("mcpAuthPending") or []
+        if pending:
+            head = ", ".join(pending[:2]) + ("…" if len(pending) > 2 else "")
+            self._row("\u26A0", "MCP auth", f"{len(pending)} pending: {head}", COLORS["amber_light"])
+
+        # Opus routing-drop watch
+        if (data.get("opusFallbacks") or {}).get("suspicious"):
+            gap = float((data.get("opusFallbacks") or {}).get("gap") or 0) * 100
+            self._row("\u26A0", "Opus routing", f"{round(gap)} pp below baseline", COLORS["red"])
+
         models = data.get("modelBreakdown") or []
         if models:
             sub = QLabel("Model split", self)
@@ -1176,6 +1217,28 @@ class FooterWidget(QWidget):
                 f"background:rgba(217,119,6,0.15);color:{COLORS['amber']};"
             )
             self._layout.addWidget(badge)
+
+        # Longest-session pill (only when we have data)
+        longest_ms = int((lifetime.get("longestSession") or {}).get("duration") or 0)
+        if longest_ms > 60000:
+            mins = longest_ms // 60000
+            txt = f"longest {mins // 60}h{mins % 60}m" if mins >= 60 else f"longest {mins}m"
+            b = QLabel(txt, self)
+            b.setStyleSheet(
+                "padding:2px 6px;border-radius:9px;font-size:10px;font-weight:700;"
+                "background:rgba(59,130,246,0.12);color:#3B82F6;"
+            )
+            self._layout.addWidget(b)
+
+        # Plugin-count pill
+        plugin_count = int((data.get("settings") or {}).get("pluginCount") or 0)
+        if plugin_count > 0:
+            b = QLabel(f"{plugin_count} plugins", self)
+            b.setStyleSheet(
+                "padding:2px 6px;border-radius:9px;font-size:10px;font-weight:700;"
+                "background:rgba(16,185,129,0.12);color:#10B981;"
+            )
+            self._layout.addWidget(b)
 
         self._layout.addStretch(1)
 
