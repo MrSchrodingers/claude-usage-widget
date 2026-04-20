@@ -1623,7 +1623,16 @@ def run_health_check():
         if not report["firefox"]["present"] and not report["chrome"]["present"]:
             report["advice"].append("No supported browser profile found. Install Firefox or Chrome and log in to https://claude.ai.")
         if report["firefox"]["present"] and not report["firefox"]["hasSessionKey"]:
-            report["advice"].append("Firefox: open https://claude.ai and sign in (no sessionKey cookie found).")
+            snap_ff_dir = Path.home() / "snap" / "firefox" / "common" / ".mozilla" / "firefox"
+            native_ff_dir = Path.home() / ".mozilla" / "firefox"
+            if snap_ff_dir.exists() and not native_ff_dir.exists():
+                report["advice"].append(
+                    "Firefox Snap detected — open https://claude.ai and sign in. "
+                    "If you're already logged in and this persists, the Snap sandbox may be blocking reads; "
+                    "try the native package (e.g. Mozilla PPA on Ubuntu) or use Chrome."
+                )
+            else:
+                report["advice"].append("Firefox: open https://claude.ai and sign in (no sessionKey cookie found).")
         if report["chrome"]["present"] and report["chrome"].get("keyStrategy") == "peanuts-fallback" and report["chrome"]["decrypted"] == 0:
             report["advice"].append("Chrome: stale KWallet entry blocked decryption. Try: kwallet-query -w 'Chrome Keys' -f 'Chrome Safe Storage' kdewallet  (then restart Chrome).")
         if report["chrome"]["present"] and report["chrome"]["decrypted"] == 0 and report["chrome"].get("reason") != "stale keyring entry — Chrome is using basic/peanuts encryption (common on KDE/Wayland when XDG portal fails)":
