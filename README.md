@@ -93,21 +93,27 @@ The Clawd mascot changes based on Claude's performance score:
 
 | Score | Level | Mascot | Trigger |
 |:-----:|:-----:|:------:|:--------|
-| 0-9 | **Genius** | Crown + sparkles | Everything perfect |
-| 10-24 | **Smart** | Coffee cup + steam | Minor config issues |
-| 25-49 | **Slow** | Rain cloud + drops | Service degraded |
-| 50-74 | **Dumb** | Fire flames | Major issues + rate limit pressure |
-| 75-100 | **Braindead** | Tombstone + ghost Clawd | Critical outage |
+| 0-4 | **Genius** | Crown + sparkles | Fully idle, all services green |
+| 5-19 | **Smart** | Coffee cup + steam | Normal session, light pressure |
+| 20-44 | **Slow** | Rain cloud + drops | Service degraded or weekly limits ≥50% |
+| 45-69 | **Dumb** | Fire flames | Major outage or rate-limit pressure |
+| 70-100 | **Braindead** | Tombstone + ghost Clawd | Critical outage / session near cap / errors flooding |
 
-### Dumbness Score Factors
+### Dumbness Score Factors (multi-parameter, continuous-curve)
 
 | Factor | Points | Source |
 |--------|:------:|--------|
-| Service health | 0-40 | status.claude.com |
-| Session utilization | 0-25 | claude.ai API |
-| API errors (2h window) | 0-20 | Local JSONL files |
-| Adaptive Thinking ON | 8 | ~/.claude/settings.json |
-| 1M Context OFF | 3 | ~/.claude/settings.json |
+| Service health | 0-30 | status.claude.com indicator + active incidents |
+| Session utilization | 0-20 | `(pct/100)^1.2 × 20` — smooth ramp |
+| Weekly all-models | 0-12 | `(pct/100)^1.1 × 12` |
+| Per-model weekly (Sonnet + Opus + Design, combined) | 0-8 | each model's `(pct − 30) / 8.75`, clamped |
+| API errors in 2h window | 0-15 | Local JSONL; rate-limit errors weighted 2× |
+| Response latency | 0-10 | Local JSONL; kicks in above 8s avg with ≥5 samples |
+| Burn-rate panic | 0-7 | Output tokens/hour × session pressure |
+| Adaptive Thinking ON | 5 | `~/.claude/settings.json` |
+| 1M Context OFF | 2 | `~/.claude/settings.json` |
+
+Genius band is deliberately tight (0-4): any realistic working session lands in **Smart** or **Slow**, not **Genius**. Levels cap at 100.
 
 > **Why is Adaptive Thinking ON a penalty?** With Adaptive Thinking enabled, Claude sometimes allocates zero reasoning tokens on complex tasks, causing lazy/shallow responses. [Learn more](https://dev.to/shuicici/claude-codes-feb-mar-2026-updates-quietly-broke-complex-engineering-heres-the-technical-5b4h)
 
@@ -292,10 +298,12 @@ The widget reads session cookies from your browser. No API keys or passwords sto
 
 | Data | Source | Scope |
 |------|--------|-------|
-| Session/weekly usage | claude.ai API | All devices |
+| Session (5h) usage | claude.ai API (`five_hour`) | All devices |
+| Weekly all-models | claude.ai API (`seven_day`) | All devices |
+| Weekly Sonnet / Opus / Design | claude.ai API (`seven_day_sonnet` / `_opus` / `_omelette`) | All devices |
 | Reset timers | claude.ai API | All devices |
-| Prepaid credits | claude.ai API | Organization |
-| Extra usage limits | claude.ai API | Organization |
+| Prepaid credits | claude.ai API (`prepaid/credits`) | Organization |
+| Extra usage limits | claude.ai API (`overage_spend_limit` + inline in `usage`) | Organization |
 | Service health | status.claude.com | Anthropic infra |
 | Error rate | Local JSONL | This machine |
 | Burn rate | Local JSONL | This machine |

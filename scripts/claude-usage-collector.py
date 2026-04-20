@@ -1034,55 +1034,141 @@ def calculate_burn_rate():
     }
 
 
-def compute_dumbness_score(service_status, session_pct, error_rate, adaptive_config):
+def compute_dumbness_score(
+    service_status,
+    session_pct,
+    error_rate,
+    adaptive_config,
+    weekly_all_pct=0,
+    weekly_sonnet_pct=0,
+    weekly_opus_pct=0,
+    weekly_design_pct=0,
+    burn_rate=None,
+    latency=None,
+):
     """Composite 'dumbness' score: 0 (genius) to 100 (braindead).
 
-    Combines: service health + rate limit pressure + API errors + config issues.
+    Multi-parameter, continuous-curve scoring. Factors (max 100):
+      - Service health             0-30   from status.claude.com
+      - Session utilization        0-20   (pct/100)^1.2 * 20 — ramps smoothly
+      - Weekly all-models          0-12   (pct/100)^1.1 * 12
+      - Weekly Sonnet              0-8    linear pressure above 30%
+      - API errors (2h)            0-15   1.8 pts per error, capped
+      - Response latency           0-10   degraded feel if consistently slow
+      - Burn-rate panic            0-7    session projected to cap before reset
+      - Adaptive thinking ON       0-5    tends to produce lazy responses
+      - 1M context OFF             0-2    milder penalty
+      - Active incidents hint      0-3    "investigating" status even without impact
+
+    Level thresholds are tight on the genius side so a perfectly idle state is
+    the only way to hit it; most working sessions land in smart/slow.
     """
-    score = 0
+    score = 0.0
     reasons = []
 
-    # Service health (0-40 pts)
+    # ── 1. Service health (0-30) ──────────────────────────────────────────
+    ind = "none"
+    active_incidents = 0
     if service_status:
         ind = service_status.get("indicator", "none")
-        if ind == "critical":
-            score += 40; reasons.append("Critical outage")
-        elif ind == "major":
-            score += 30; reasons.append("Major outage")
-        elif ind == "minor":
-            score += 15; reasons.append("Degraded service")
+        active_incidents = len(service_status.get("active_incidents", []))
+    if ind == "critical":
+        score += 30; reasons.append("Critical outage")
+    elif ind == "major":
+        score += 22; reasons.append("Major outage")
+    elif ind == "minor":
+        score += 11; reasons.append("Degraded service")
+    elif active_incidents > 0:
+        score += 3; reasons.append(f"{active_incidents} incident(s) investigating")
 
-    # Session utilization pressure (0-25 pts)
-    if session_pct > 90:
-        score += 25; reasons.append("Session >90%")
-    elif session_pct > 80:
-        score += 15; reasons.append("Session >80%")
-    elif session_pct > 60:
-        score += 5
+    # ── 2. Session utilization (0-20) ─────────────────────────────────────
+    if session_pct > 0:
+        pts = min(20.0, (session_pct / 100.0) ** 1.2 * 20.0)
+        score += pts
+        if session_pct >= 80:
+            reasons.append(f"Session {session_pct:.0f}% — near cap")
+        elif session_pct >= 50:
+            reasons.append(f"Session {session_pct:.0f}%")
 
-    # Recent API errors (0-20 pts)
-    total_err = error_rate.get("total", 0)
-    if total_err > 10:
-        score += 20; reasons.append(f"{total_err} errors/2h")
-    elif total_err > 3:
-        score += 10; reasons.append(f"{total_err} errors/2h")
-    elif total_err > 0:
-        score += 5
+    # ── 3. Weekly all-models (0-12) ───────────────────────────────────────
+    if weekly_all_pct > 0:
+        pts = min(12.0, (weekly_all_pct / 100.0) ** 1.1 * 12.0)
+        score += pts
+        if weekly_all_pct >= 70:
+            reasons.append(f"Weekly {weekly_all_pct:.0f}%")
 
-    # Adaptive thinking: ON is worse (causes lazy responses)
-    if adaptive_config.get("adaptive_thinking", True):
-        score += 8; reasons.append("Adaptive thinking ON (lazy responses)")
-    if not adaptive_config.get("context_1m", True):
-        score += 3; reasons.append("1M context OFF")
+    # ── 4. Per-model weekly pressure (Sonnet/Opus/Design) (0-8 combined) ──
+    model_pressure = 0.0
+    if weekly_sonnet_pct > 30:
+        model_pressure += (weekly_sonnet_pct - 30) / 8.75
+        if weekly_sonnet_pct >= 60:
+            reasons.append(f"Sonnet weekly {weekly_sonnet_pct:.0f}%")
+    if weekly_opus_pct > 30:
+        model_pressure += (weekly_opus_pct - 30) / 8.75
+        if weekly_opus_pct >= 60:
+            reasons.append(f"Opus weekly {weekly_opus_pct:.0f}%")
+    if weekly_design_pct > 30:
+        model_pressure += (weekly_design_pct - 30) / 8.75
+        if weekly_design_pct >= 60:
+            reasons.append(f"Design weekly {weekly_design_pct:.0f}%")
+    score += min(8.0, model_pressure)
 
-    score = min(100, score)
-    if score < 10:
+    # ── 5. API errors in 2h window (0-15) ─────────────────────────────────
+    total_err = error_rate.get("total", 0) if error_rate else 0
+    rate_limit_err = error_rate.get("rate_limit", 0) if error_rate else 0
+    if total_err > 0:
+        # Rate-limit errors are 2x as painful as generic ones
+        weighted = total_err + rate_limit_err
+        pts = min(15.0, weighted * 1.8)
+        score += pts
+        if total_err >= 5:
+            reasons.append(f"{total_err} errors/2h")
+        elif total_err >= 2:
+            reasons.append(f"{total_err} errors/2h")
+
+    # ── 6. Response latency (0-10) ────────────────────────────────────────
+    if latency:
+        avg = latency.get("avgSeconds", 0)
+        sample = latency.get("sampleSize", 0)
+        if sample >= 5 and avg > 0:
+            # 8s = 0, 12s = 3, 18s = 7, 25s+ = 10
+            if avg > 25:
+                pts = 10.0
+            elif avg > 8:
+                pts = min(10.0, (avg - 8) * 0.7)
+            else:
+                pts = 0.0
+            score += pts
+            if avg > 18:
+                reasons.append(f"Slow responses ({avg:.0f}s avg)")
+
+    # ── 7. Burn-rate panic (0-7) ──────────────────────────────────────────
+    if burn_rate and session_pct > 0:
+        output_per_h = burn_rate.get("output_per_hour", 0)
+        # High burn + already stressed session = panic. Weight smoothly.
+        if output_per_h > 200_000 and session_pct > 30:
+            panic = min(7.0, (session_pct - 30) / 10.0 + (output_per_h - 200_000) / 300_000)
+            if panic > 0:
+                score += panic
+                if panic >= 4:
+                    reasons.append("High burn rate — limit approaching fast")
+
+    # ── 8. Config penalties ───────────────────────────────────────────────
+    if adaptive_config and adaptive_config.get("adaptive_thinking", True):
+        score += 5; reasons.append("Adaptive thinking ON (lazy responses)")
+    if adaptive_config and not adaptive_config.get("context_1m", True):
+        score += 2; reasons.append("1M context OFF")
+
+    score = min(100, int(round(score)))
+
+    # Tight genius band so even light activity moves the needle.
+    if score < 5:
         level = "genius"
-    elif score < 25:
+    elif score < 20:
         level = "smart"
-    elif score < 50:
+    elif score < 45:
         level = "slow"
-    elif score < 75:
+    elif score < 70:
         level = "dumb"
     else:
         level = "braindead"
@@ -1217,9 +1303,8 @@ def build_rate_limits():
     credits_data = fetch_credits_from_api()
 
     if api_data:
-        five_hour = api_data.get("five_hour", {})
-        seven_day = api_data.get("seven_day", {})
-        seven_day_sonnet = api_data.get("seven_day_sonnet", {})
+        five_hour = api_data.get("five_hour") or {}
+        seven_day = api_data.get("seven_day") or {}
 
         # Calculate reset time (parse_timestamp handles Z suffix on Python < 3.11)
         reset_dt = parse_timestamp(five_hour.get("resets_at", ""))
@@ -1229,27 +1314,69 @@ def build_rate_limits():
         wr_dt = parse_timestamp(seven_day.get("resets_at", ""))
         weekly_reset_label = wr_dt.strftime("%a %I:%M %p") if wr_dt else ""
 
-        # Weekly Sonnet reset
-        sr_dt = parse_timestamp((seven_day_sonnet or {}).get("resets_at", ""))
-        sonnet_reset_label = sr_dt.strftime("%a %I:%M %p") if sr_dt else ""
+        def _weekly_block(payload):
+            """Shape a seven_day_* entry. Returns None if the API omitted it (null)."""
+            if not payload:
+                return None
+            d = parse_timestamp(payload.get("resets_at", ""))
+            return {
+                "percentUsed": payload.get("utilization", 0) or 0,
+                "resetsLabel": d.strftime("%a %I:%M %p") if d else "",
+            }
 
+        # weeklySonnet is always present for backward compatibility with existing
+        # consumers (QML, Tauri JS, PySide6) that read rateLimits.weeklySonnet
+        # directly. It defaults to 0% when the API returned null.
+        sonnet_payload = api_data.get("seven_day_sonnet") or {}
+        ss_dt = parse_timestamp(sonnet_payload.get("resets_at", ""))
         result = {
             "session": {
-                "percentUsed": five_hour.get("utilization", 0),
+                "percentUsed": five_hour.get("utilization", 0) or 0,
                 "resetsInMinutes": reset_minutes,
                 "windowHours": 5,
             },
             "weeklyAll": {
-                "percentUsed": seven_day.get("utilization", 0),
+                "percentUsed": seven_day.get("utilization", 0) or 0,
                 "resetsLabel": weekly_reset_label,
             },
             "weeklySonnet": {
-                "percentUsed": (seven_day_sonnet or {}).get("utilization", 0),
-                "resetsLabel": sonnet_reset_label,
+                "percentUsed": sonnet_payload.get("utilization", 0) or 0,
+                "resetsLabel": ss_dt.strftime("%a %I:%M %p") if ss_dt else "",
             },
             "plan": "Max (20x)",
             "source": "api",
         }
+
+        # New per-model weekly blocks (Opus, Claude Design/omelette, OAuth apps,
+        # Cowork). Each is omitted when the API returned null so consumers can
+        # check `if "weeklyOpus" in rateLimits` cleanly without confusing a real
+        # zero with an unavailable metric.
+        weekly_opus = _weekly_block(api_data.get("seven_day_opus"))
+        if weekly_opus:
+            result["weeklyOpus"] = weekly_opus
+        # "omelette" is Anthropic's internal codename for the Claude Design surface.
+        weekly_design = _weekly_block(api_data.get("seven_day_omelette"))
+        if weekly_design:
+            result["weeklyDesign"] = weekly_design
+        weekly_oauth_apps = _weekly_block(api_data.get("seven_day_oauth_apps"))
+        if weekly_oauth_apps:
+            result["weeklyOauthApps"] = weekly_oauth_apps
+        # "cowork" covers the Claude Code teams / collaboration tier when active.
+        weekly_cowork = _weekly_block(api_data.get("seven_day_cowork"))
+        if weekly_cowork:
+            result["weeklyCowork"] = weekly_cowork
+
+        # Inline extra_usage summary (the `usage` endpoint also carries a quick
+        # snapshot; the full shape lives under overage_spend_limit below).
+        inline_eu = api_data.get("extra_usage") or {}
+        if inline_eu.get("is_enabled"):
+            result["extraUsageInline"] = {
+                "enabled": True,
+                "monthlyLimit": (inline_eu.get("monthly_limit") or 0) / 100,
+                "usedCredits": (inline_eu.get("used_credits") or 0) / 100,
+                "utilization": inline_eu.get("utilization") or 0,
+                "currency": inline_eu.get("currency") or "USD",
+            }
 
         # Add credits info (full details)
         if credits_data:
@@ -1327,8 +1454,20 @@ def build_widget_data():
     adaptive_config = detect_adaptive_thinking()
     session_pct = rate_limits.get("session", {}).get("percentUsed", 0)
     reset_mins = rate_limits.get("session", {}).get("resetsInMinutes", 0)
-    dumbness = compute_dumbness_score(service_status, session_pct, error_rate, adaptive_config)
+    weekly_all_pct = rate_limits.get("weeklyAll", {}).get("percentUsed", 0)
+    weekly_sonnet_pct = rate_limits.get("weeklySonnet", {}).get("percentUsed", 0)
+    weekly_opus_pct = (rate_limits.get("weeklyOpus") or {}).get("percentUsed", 0)
+    weekly_design_pct = (rate_limits.get("weeklyDesign") or {}).get("percentUsed", 0)
     latency = calculate_latency()
+    dumbness = compute_dumbness_score(
+        service_status, session_pct, error_rate, adaptive_config,
+        weekly_all_pct=weekly_all_pct,
+        weekly_sonnet_pct=weekly_sonnet_pct,
+        weekly_opus_pct=weekly_opus_pct,
+        weekly_design_pct=weekly_design_pct,
+        burn_rate=burn_rate,
+        latency=latency,
+    )
     active_dates, today_str = calculate_streak()
     limit_eta = predict_limit_eta(session_pct, reset_mins)
     cc_version = get_claude_code_version()
