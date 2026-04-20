@@ -34,6 +34,11 @@ PlasmoidItem {
     readonly property int refreshInterval: 30000
 
     // Claude palette
+    // Global font scale — multiplier applied to every `pixelSize` binding.
+    // Default 1.20 bumps the UI one step up from Plasma's system font size
+    // without needing user intervention. Safe to tweak live.
+    readonly property real fontScale: 1.20
+
     readonly property color claudeAmber: "#D97706"
     readonly property color claudeAmberLight: "#F59E0B"
     readonly property color claudeAmberDim: "#92400E"
@@ -46,8 +51,8 @@ PlasmoidItem {
     readonly property color cardBg: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.05)
     readonly property color subtleBorder: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08)
 
-    switchWidth: Kirigami.Units.gridUnit * 20
-    switchHeight: Kirigami.Units.gridUnit * 28
+    switchWidth: Kirigami.Units.gridUnit * 24
+    switchHeight: Kirigami.Units.gridUnit * 32
 
     toolTipMainText: "Claude Usage"
     toolTipSubText: {
@@ -166,7 +171,7 @@ PlasmoidItem {
             PlasmaComponents3.Label {
                 property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
                 text: root.hasData ? Math.round(pct) + "%" : "--"
-                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.15
+                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.15
                 font.weight: Font.Bold
                 color: limitColor(pct)
             }
@@ -216,7 +221,7 @@ PlasmoidItem {
                         if (ind === "critical") return "Critical";
                         return "";
                     }
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.80
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.80
                     font.weight: Font.DemiBold
                     color: statusColor(statusCompact.indicator)
                 }
@@ -300,7 +305,7 @@ PlasmoidItem {
                         id: eggLabel; visible: false
                         anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottomMargin: -2
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.6
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.6
                         opacity: 0.7
                     }
                     Timer { id: eggHide; interval: 1500; onTriggered: eggLabel.visible = false }
@@ -395,7 +400,7 @@ PlasmoidItem {
                         spacing: 6
                         PlasmaComponents3.Label {
                             text: "Claude"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.5
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.5
                             font.weight: Font.Bold
                         }
                         Rectangle {
@@ -417,7 +422,7 @@ PlasmoidItem {
                                     if (l === "braindead") return "Braindead";
                                     return "Smart";
                                 }
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.0
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.0
                                 font.weight: Font.Bold
                                 color: {
                                     var l = root.dumbLevel;
@@ -442,7 +447,7 @@ PlasmoidItem {
                         }
                         PlasmaComponents3.Label {
                             text: root.usageData.rateLimits?.plan ?? "Max (20x)"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                             color: root.claudeAmber
                             opacity: 0.8
                         }
@@ -455,7 +460,7 @@ PlasmoidItem {
                                 var src = root.usageData.rateLimits?.source ?? "";
                                 return src === "api" ? "Live" : "Offline";
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.825
                             color: root.usageData.rateLimits?.source === "api" ? root.greenAccent : Kirigami.Theme.textColor
                             opacity: 0.6
                         }
@@ -497,7 +502,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         PlasmaComponents3.Label {
                             text: "Current session"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             font.weight: Font.DemiBold
                             opacity: 0.7
                         }
@@ -511,7 +516,7 @@ PlasmoidItem {
                                 if (s > 0) return "Resets in " + s + "s";
                                 return "Rolling 5h";
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                             opacity: 0.4
                         }
                     }
@@ -558,7 +563,7 @@ PlasmoidItem {
                             property real pct: root.usageData.rateLimits?.session?.percentUsed ?? 0
                             Behavior on pct { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
                             text: Math.round(pct) + "%"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 2.5
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 2.5
                             font.weight: Font.Bold
                             color: limitColor(pct)
                         }
@@ -573,7 +578,7 @@ PlasmoidItem {
                             return eta != null && eta < 120 && eta > 0;
                         }
                         text: "At current rate, limit in " + (root.usageData.limitEta?.label ?? "?")
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                         font.italic: true
                         horizontalAlignment: Text.AlignHCenter
                         color: root.claudeAmberLight
@@ -599,7 +604,7 @@ PlasmoidItem {
 
                     PlasmaComponents3.Label {
                         text: "Weekly limits"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85
                         font.weight: Font.DemiBold
                         opacity: 0.5
                     }
@@ -614,19 +619,19 @@ PlasmoidItem {
                             Rectangle { width: 8; height: 8; radius: 4; color: root.blueAccent }
                             PlasmaComponents3.Label {
                                 text: "All models"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklyAll?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklyAll?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
                                 property real pct: root.usageData.rateLimits?.weeklyAll?.percentUsed ?? 0
                                 text: Math.round(pct) + "%"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.1
                                 font.weight: Font.Bold
                                 color: limitColor(pct)
                             }
@@ -655,19 +660,19 @@ PlasmoidItem {
                             Rectangle { width: 8; height: 8; radius: 4; color: root.greenAccent }
                             PlasmaComponents3.Label {
                                 text: "Sonnet only"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklySonnet?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklySonnet?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
                                 property real pct: root.usageData.rateLimits?.weeklySonnet?.percentUsed ?? 0
                                 text: Math.round(pct) + "%"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.1
                                 font.weight: Font.Bold
                                 color: limitColor(pct)
                             }
@@ -698,19 +703,19 @@ PlasmoidItem {
                             Rectangle { width: 8; height: 8; radius: 4; color: root.purpleAccent }
                             PlasmaComponents3.Label {
                                 text: "Opus only"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklyOpus?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklyOpus?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
                                 property real pct: root.usageData.rateLimits?.weeklyOpus?.percentUsed ?? 0
                                 text: Math.round(pct) + "%"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.1
                                 font.weight: Font.Bold
                                 color: limitColor(pct)
                             }
@@ -741,19 +746,19 @@ PlasmoidItem {
                             Rectangle { width: 8; height: 8; radius: 4; color: root.pinkAccent }
                             PlasmaComponents3.Label {
                                 text: "Claude Design"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklyDesign?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklyDesign?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
                                 property real pct: root.usageData.rateLimits?.weeklyDesign?.percentUsed ?? 0
                                 text: Math.round(pct) + "%"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.1
                                 font.weight: Font.Bold
                                 color: limitColor(pct)
                             }
@@ -784,19 +789,19 @@ PlasmoidItem {
                             Rectangle { width: 8; height: 8; radius: 4; color: root.cyanAccent }
                             PlasmaComponents3.Label {
                                 text: "OAuth apps"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklyOauthApps?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklyOauthApps?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
                                 property real pct: root.usageData.rateLimits?.weeklyOauthApps?.percentUsed ?? 0
                                 text: Math.round(pct) + "%"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.1
                                 font.weight: Font.Bold
                                 color: limitColor(pct)
                             }
@@ -827,19 +832,19 @@ PlasmoidItem {
                             Rectangle { width: 8; height: 8; radius: 4; color: root.claudeAmberLight }
                             PlasmaComponents3.Label {
                                 text: "Cowork"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
                                 visible: (root.usageData.rateLimits?.weeklyCowork?.resetsLabel ?? "") !== ""
                                 text: "Resets " + (root.usageData.rateLimits?.weeklyCowork?.resetsLabel ?? "")
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 opacity: 0.35
                             }
                             PlasmaComponents3.Label {
                                 property real pct: root.usageData.rateLimits?.weeklyCowork?.percentUsed ?? 0
                                 text: Math.round(pct) + "%"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.1
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.1
                                 font.weight: Font.Bold
                                 color: limitColor(pct)
                             }
@@ -889,7 +894,7 @@ PlasmoidItem {
                         }
                         PlasmaComponents3.Label {
                             text: "Credits"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             font.weight: Font.DemiBold; opacity: 0.55
                         }
                         Item { Layout.fillWidth: true }
@@ -901,7 +906,7 @@ PlasmoidItem {
                                 if (currency === "BRL") return "R$ " + amount.toLocaleString(Qt.locale(), 'f', 2);
                                 return "$ " + amount.toLocaleString(Qt.locale(), 'f', 2);
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.3
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 1.3
                             font.weight: Font.Bold
                             color: root.claudeAmber
                         }
@@ -913,13 +918,13 @@ PlasmoidItem {
                         Kirigami.Icon { source: "view-refresh"; Layout.preferredWidth: 12; Layout.preferredHeight: 12; opacity: 0.4 }
                         PlasmaComponents3.Label {
                             text: "Auto-reload"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.5
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.5
                         }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             property bool on: root.usageData.rateLimits?.credits?.autoReload ?? false
                             text: on ? "ON" : "OFF"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85
                             font.weight: Font.Bold
                             color: on ? root.greenAccent : root.claudeAmberLight
                         }
@@ -938,7 +943,7 @@ PlasmoidItem {
                         Kirigami.Icon { source: "list-add"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
                         PlasmaComponents3.Label {
                             text: "Extra Usage"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             font.weight: Font.DemiBold; opacity: 0.55
                         }
                         Item { Layout.fillWidth: true }
@@ -953,7 +958,7 @@ PlasmoidItem {
                             PlasmaComponents3.Label {
                                 id: _extraLbl; anchors.centerIn: parent
                                 text: parent.on ? "Active" : "Disabled"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                                 font.weight: Font.Bold
                                 color: parent.on ? root.greenAccent : root.redAlert
                             }
@@ -966,7 +971,7 @@ PlasmoidItem {
                         visible: root.usageData.rateLimits?.extraUsage != null
                         PlasmaComponents3.Label {
                             text: "Monthly limit"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.5
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.5
                         }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
@@ -976,7 +981,7 @@ PlasmoidItem {
                                 var amt = e.monthlyLimit ?? 0;
                                 return (c === "BRL" ? "R$ " : "$ ") + amt.toLocaleString(Qt.locale(), 'f', 2);
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85
                             font.weight: Font.DemiBold
                         }
                     }
@@ -990,7 +995,7 @@ PlasmoidItem {
                             Layout.fillWidth: true
                             PlasmaComponents3.Label {
                                 text: "Used"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.5
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.5
                             }
                             Item { Layout.fillWidth: true }
                             PlasmaComponents3.Label {
@@ -1001,7 +1006,7 @@ PlasmoidItem {
                                     var prefix = c === "BRL" ? "R$ " : "$ ";
                                     return prefix + used.toLocaleString(Qt.locale(), 'f', 2) + " / " + prefix + limit.toLocaleString(Qt.locale(), 'f', 2);
                                 }
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6
                             }
                         }
 
@@ -1072,7 +1077,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             text: "Service Health"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.88
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.88
                             font.weight: Font.DemiBold
                             opacity: 0.65
                         }
@@ -1106,7 +1111,7 @@ PlasmoidItem {
                                     if (ind === "critical") return "Critical Outage";
                                     return "Unknown";
                                 }
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.88
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.88
                                 font.weight: Font.Bold
                                 color: statusColor(root.usageData.serviceStatus?.indicator ?? "none")
                             }
@@ -1128,7 +1133,7 @@ PlasmoidItem {
                                 }
                                 PlasmaComponents3.Label {
                                     text: modelData.name ?? ""
-                                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                                     opacity: 0.55
                                 }
                             }
@@ -1150,7 +1155,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             text: "User reports:"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                             opacity: 0.35
                         }
 
@@ -1158,7 +1163,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.ToolButton {
                             text: "DownDetector ↗"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                             opacity: 0.55
                             flat: true
                             padding: 0
@@ -1185,7 +1190,7 @@ PlasmoidItem {
                                 return names.map(function(n) { return n.replace(/^claude\.ai\s+/, ""); });
                             }
                             text: pending.length + " MCP" + (pending.length === 1 ? "" : "s") + " need re-auth: " + stripPrefix(pending.slice(0, 3)).join(", ") + (pending.length > 3 ? "…" : "")
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                             color: root.claudeAmberLight
                             Layout.fillWidth: true
                             elide: Text.ElideRight
@@ -1203,7 +1208,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             property real gap: root.usageData.opusFallbacks?.gap ?? 0
                             text: "Opus routing drop: " + Math.round(gap * 100) + " pp below weekly baseline"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                             color: root.redAlert
                             Layout.fillWidth: true
                             elide: Text.ElideRight
@@ -1220,7 +1225,7 @@ PlasmoidItem {
                             PlasmaComponents3.Label {
                                 Layout.fillWidth: true
                                 text: modelData.name ?? ""
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                                 font.weight: Font.DemiBold
                                 color: root.redAlert
                                 wrapMode: Text.WordWrap
@@ -1232,7 +1237,7 @@ PlasmoidItem {
                                 Layout.fillWidth: true
                                 visible: (modelData.latest_update ?? "") !== ""
                                 text: modelData.latest_update ?? ""
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.823
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.823
                                 opacity: 0.50
                                 wrapMode: Text.WordWrap
                                 maximumLineCount: 2
@@ -1279,7 +1284,7 @@ PlasmoidItem {
                                 if (lvl === "genius") return "✨ Genius";
                                 return "🤔 Hmm";
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             font.weight: Font.Bold
                         }
 
@@ -1300,7 +1305,7 @@ PlasmoidItem {
                                 id: _dumbLabel
                                 anchors.centerIn: parent
                                 text: root.dumbScore + "/100"
-                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                                font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                                 font.weight: Font.Bold
                                 color: {
                                     if (root.dumbScore >= 75) return root.redAlert;
@@ -1317,7 +1322,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             Layout.fillWidth: true
                             text: "  • " + modelData
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                             opacity: 0.55
                         }
                     }
@@ -1327,7 +1332,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         visible: !(root.usageData.adaptiveThinking?.adaptive_thinking ?? true)
                         text: "Tip: Adaptive Thinking is OFF in settings.json"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.822
                         font.italic: true
                         opacity: 0.45
                         wrapMode: Text.WordWrap
@@ -1352,7 +1357,7 @@ PlasmoidItem {
 
                     PlasmaComponents3.Label {
                         text: "Activity"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                         font.weight: Font.DemiBold
                         opacity: 0.5
                     }
@@ -1370,7 +1375,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             text: "Burn rate"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                             opacity: 0.6
                         }
 
@@ -1383,7 +1388,7 @@ PlasmoidItem {
                                 if (rate >= 1e3) return (rate / 1e3).toFixed(0) + "K/h";
                                 return rate + "/h";
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.9
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.9
                             font.weight: Font.Bold
                             color: rate > 500000 ? root.claudeAmberLight : Kirigami.Theme.textColor
                         }
@@ -1402,7 +1407,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             text: "Errors (2h)"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                             opacity: 0.6
                         }
 
@@ -1411,7 +1416,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             property int errs: root.usageData.errorRate?.total ?? 0
                             text: errs > 0 ? errs + " errors" : "None"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85
                             font.weight: Font.Bold
                             color: errs > 5 ? root.redAlert : errs > 0 ? root.claudeAmberLight : root.greenAccent
                         }
@@ -1430,7 +1435,7 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             text: "Adaptive Thinking"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                             opacity: 0.6
                         }
 
@@ -1439,7 +1444,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             property bool on: root.usageData.adaptiveThinking?.adaptive_thinking ?? true
                             text: on ? "ON" : "OFF"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85
                             font.weight: Font.Bold
                             color: on ? root.greenAccent : root.redAlert
                         }
@@ -1450,12 +1455,12 @@ PlasmoidItem {
                         Layout.fillWidth: true; spacing: 4
                         visible: (root.usageData.responseQuality?.avgTokensPerResponse ?? 0) > 0
                         Kirigami.Icon { source: "document-edit"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
-                        PlasmaComponents3.Label { text: "Avg response"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        PlasmaComponents3.Label { text: "Avg response"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6 }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             property int avg: root.usageData.responseQuality?.avgTokensPerResponse ?? 0
                             text: root.formatTokens(avg) + " tok"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85; font.weight: Font.Bold
                             color: avg > 500 ? root.greenAccent : avg > 200 ? root.claudeAmberLight : root.redAlert
                         }
                     }
@@ -1465,12 +1470,12 @@ PlasmoidItem {
                         Layout.fillWidth: true; spacing: 4
                         visible: (root.usageData.latency?.avgSeconds ?? 0) > 0
                         Kirigami.Icon { source: "chronometer"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
-                        PlasmaComponents3.Label { text: "Avg latency"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        PlasmaComponents3.Label { text: "Avg latency"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6 }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             property real lat: root.usageData.latency?.avgSeconds ?? 0
                             text: lat.toFixed(1) + "s"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85; font.weight: Font.Bold
                             color: lat < 10 ? root.greenAccent : lat < 30 ? root.claudeAmberLight : root.redAlert
                         }
                     }
@@ -1480,12 +1485,12 @@ PlasmoidItem {
                         Layout.fillWidth: true; spacing: 4
                         visible: (root.usageData.today?.cacheHitRate ?? 0) > 0
                         Kirigami.Icon { source: "drive-harddisk"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
-                        PlasmaComponents3.Label { text: "Cache hit"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        PlasmaComponents3.Label { text: "Cache hit"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6 }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             property real hit: root.usageData.today?.cacheHitRate ?? 0
                             text: hit.toFixed(0) + "%"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85; font.weight: Font.Bold
                             // >60% = great (green), 15–60% = ok (neutral), <15% = leverage opportunity (amber)
                             color: hit >= 60 ? root.greenAccent : hit >= 15 ? Kirigami.Theme.textColor : root.claudeAmberLight
                         }
@@ -1496,7 +1501,7 @@ PlasmoidItem {
                         Layout.fillWidth: true; spacing: 4
                         visible: (root.usageData.today?.costUSD ?? 0) > 0 || (root.usageData.costProjection?.runwayDays ?? null) !== null
                         Kirigami.Icon { source: "office-chart-bar"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
-                        PlasmaComponents3.Label { text: "Cost today"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        PlasmaComponents3.Label { text: "Cost today"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6 }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             property real usd: root.usageData.today?.costUSD ?? 0
@@ -1506,7 +1511,7 @@ PlasmoidItem {
                                 if (runway !== null && runway < 14) base += " · " + runway.toFixed(1) + "d left";
                                 return base;
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85; font.weight: Font.Bold
                             color: (runway !== null && runway < 2) ? root.redAlert
                                  : (runway !== null && runway < 7) ? root.claudeAmberLight
                                  : Kirigami.Theme.textColor
@@ -1518,12 +1523,12 @@ PlasmoidItem {
                         Layout.fillWidth: true; spacing: 4
                         visible: (root.usageData.compaction?.count ?? 0) > 0
                         Kirigami.Icon { source: "view-list-compact"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
-                        PlasmaComponents3.Label { text: "Compactions (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        PlasmaComponents3.Label { text: "Compactions (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6 }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             property int c: root.usageData.compaction?.count ?? 0
                             text: c
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85; font.weight: Font.Bold
                             color: c >= 3 ? root.claudeAmberLight : Kirigami.Theme.textColor
                         }
                     }
@@ -1535,7 +1540,7 @@ PlasmoidItem {
                         spacing: 4
                         visible: (root.usageData.toolUse?.total ?? 0) > 0
                         Kirigami.Icon { source: "system-run"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
-                        PlasmaComponents3.Label { text: "Top tools (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
+                        PlasmaComponents3.Label { text: "Top tools (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82; opacity: 0.6 }
                         Item { Layout.fillWidth: true }
                         PlasmaComponents3.Label {
                             text: {
@@ -1544,7 +1549,7 @@ PlasmoidItem {
                                 entries.sort(function(a, b) { return b[1] - a[1]; });
                                 return entries.slice(0, 3).map(function(e) { return e[0]; }).join(" · ");
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.85
                             font.weight: Font.Bold
                             elide: Text.ElideRight
                             Layout.maximumWidth: 160
@@ -1556,7 +1561,7 @@ PlasmoidItem {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 4
                         visible: (root.usageData.modelBreakdown ?? []).length > 0
-                        PlasmaComponents3.Label { text: "Model split"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828; opacity: 0.4 }
+                        PlasmaComponents3.Label { text: "Model split"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828; opacity: 0.4 }
                         Rectangle {
                             Layout.fillWidth: true; height: 8; radius: 4; color: root.subtleBorder; clip: true
                             Row {
@@ -1579,7 +1584,7 @@ PlasmoidItem {
                                     Rectangle { width: 6; height: 6; radius: 3; color: modelData.color ?? "#9CA3AF" }
                                     PlasmaComponents3.Label {
                                         text: (modelData.model ?? "") + " " + Math.round(modelData.percentage ?? 0) + "%"
-                                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8; opacity: 0.5
+                                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8; opacity: 0.5
                                     }
                                 }
                             }
@@ -1599,7 +1604,7 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     text: "claude.ai"
                     icon.name: "internet-web-browser"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                     onClicked: Qt.openUrlExternally("https://claude.ai")
                 }
 
@@ -1607,7 +1612,7 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     text: "Status"
                     icon.name: "network-connect"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                     onClicked: Qt.openUrlExternally("https://status.claude.com")
                 }
 
@@ -1615,7 +1620,7 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     text: "Copy Stats"
                     icon.name: "edit-copy"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                     onClicked: {
                         var s = root.usageData;
                         var stats = "Claude " + new Date().toLocaleDateString()
@@ -1645,7 +1650,7 @@ PlasmoidItem {
 
                     PlasmaComponents3.Label {
                         text: "7-day activity"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                         opacity: 0.4
                     }
 
@@ -1724,7 +1729,7 @@ PlasmoidItem {
                     anchors.fill: parent; anchors.margins: Kirigami.Units.mediumSpacing; spacing: 4
 
                     PlasmaComponents3.Label {
-                        text: "Peak hours"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8; opacity: 0.4
+                        text: "Peak hours"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8; opacity: 0.4
                     }
 
                     Item {
@@ -1785,7 +1790,7 @@ PlasmoidItem {
 
                     PlasmaComponents3.Label {
                         text: (root.usageData.lifetime?.totalSessions ?? 0) + " sessions"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.825
                         opacity: 0.3
                     }
 
@@ -1797,7 +1802,7 @@ PlasmoidItem {
                             if (!s) return "";
                             return "since " + new Date(s).toLocaleDateString(Qt.locale(), "MMM yyyy");
                         }
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.825
                         opacity: 0.3
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -1807,7 +1812,7 @@ PlasmoidItem {
                     PlasmaComponents3.Label {
                         visible: (root.usageData.claudeCodeVersion ?? "") !== ""
                         text: root.usageData.claudeCodeVersion ?? ""
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.828
                         opacity: 0.2
                     }
 
@@ -1819,7 +1824,7 @@ PlasmoidItem {
 
                     PlasmaComponents3.Label {
                         text: "Anthropic"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.82
                         font.weight: Font.DemiBold
                         opacity: 0.2
                     }
@@ -1844,7 +1849,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             id: _streakLbl; anchors.centerIn: parent
                             text: (root.usageData.streak?.days ?? 0) + "d streak"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                             font.weight: Font.Bold; color: root.claudeAmber
                         }
                     }
@@ -1864,7 +1869,7 @@ PlasmoidItem {
                                 if (mins >= 60) return "longest " + Math.floor(mins / 60) + "h" + (mins % 60) + "m";
                                 return "longest " + mins + "m";
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                             font.weight: Font.Bold; color: root.blueAccent
                         }
                     }
@@ -1879,7 +1884,7 @@ PlasmoidItem {
                         PlasmaComponents3.Label {
                             id: _pluginLbl; anchors.centerIn: parent
                             text: (root.usageData.settings?.pluginCount ?? 0) + " plugins"
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * root.fontScale * 0.8
                             font.weight: Font.Bold; color: root.greenAccent
                         }
                     }
