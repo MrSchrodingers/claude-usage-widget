@@ -1180,11 +1180,11 @@ PlasmoidItem {
 
                         PlasmaComponents3.Label {
                             property var pending: root.usageData.mcpAuthPending ?? []
-                            // Strip the 'claude.ai ' prefix that appears in the cache keys to save width
-                            function short(names) {
+                            // Strip the 'claude.ai ' prefix from cache keys to save width
+                            function stripPrefix(names) {
                                 return names.map(function(n) { return n.replace(/^claude\.ai\s+/, ""); });
                             }
-                            text: pending.length + " MCP" + (pending.length === 1 ? "" : "s") + " need re-auth: " + short(pending.slice(0, 3)).join(", ") + (pending.length > 3 ? "…" : "")
+                            text: pending.length + " MCP" + (pending.length === 1 ? "" : "s") + " need re-auth: " + stripPrefix(pending.slice(0, 3)).join(", ") + (pending.length > 3 ? "…" : "")
                             font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                             color: root.claudeAmberLight
                             Layout.fillWidth: true
