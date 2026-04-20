@@ -1169,14 +1169,22 @@ PlasmoidItem {
                     // MCP re-auth pending — silent until something actually needs attention
                     RowLayout {
                         Layout.fillWidth: true
+                        Layout.preferredWidth: 1  // lets fillWidth bind to parent instead of intrinsic content
                         spacing: 4
                         visible: (root.usageData.mcpAuthPending ?? []).length > 0
 
-                        Rectangle { width: 6; height: 6; radius: 3; color: root.claudeAmberLight }
+                        Rectangle {
+                            Layout.preferredWidth: 6; Layout.preferredHeight: 6
+                            radius: 3; color: root.claudeAmberLight
+                        }
 
                         PlasmaComponents3.Label {
                             property var pending: root.usageData.mcpAuthPending ?? []
-                            text: pending.length + " MCP" + (pending.length === 1 ? "" : "s") + " need re-auth: " + pending.slice(0, 3).join(", ") + (pending.length > 3 ? "…" : "")
+                            // Strip the 'claude.ai ' prefix that appears in the cache keys to save width
+                            function short(names) {
+                                return names.map(function(n) { return n.replace(/^claude\.ai\s+/, ""); });
+                            }
+                            text: pending.length + " MCP" + (pending.length === 1 ? "" : "s") + " need re-auth: " + short(pending.slice(0, 3)).join(", ") + (pending.length > 3 ? "…" : "")
                             font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.822
                             color: root.claudeAmberLight
                             Layout.fillWidth: true
@@ -1522,7 +1530,9 @@ PlasmoidItem {
 
                     // Top tools used (compact top-3)
                     RowLayout {
-                        Layout.fillWidth: true; spacing: 4
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        spacing: 4
                         visible: (root.usageData.toolUse?.total ?? 0) > 0
                         Kirigami.Icon { source: "system-run"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; opacity: 0.5 }
                         PlasmaComponents3.Label { text: "Top tools (7d)"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82; opacity: 0.6 }
@@ -1534,8 +1544,11 @@ PlasmoidItem {
                                 entries.sort(function(a, b) { return b[1] - a[1]; });
                                 return entries.slice(0, 3).map(function(e) { return e[0]; }).join(" · ");
                             }
-                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85; font.weight: Font.Bold
-                            elide: Text.ElideRight; Layout.maximumWidth: 180
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.85
+                            font.weight: Font.Bold
+                            elide: Text.ElideRight
+                            Layout.maximumWidth: 160
+                            Layout.alignment: Qt.AlignRight
                         }
                     }
 
@@ -1749,108 +1762,132 @@ PlasmoidItem {
 
             // ══════════════════════════════════
             // ── Footer ──
+            // Split into two rows: (1) primary metadata + version/brand,
+            // (2) overflow-capable badge row. Keeping them separate prevents
+            // badges from growing the popup's implicit width past switchWidth.
             // ══════════════════════════════════
-            RowLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
+                spacing: 2
 
-                Image {
-                    source: Qt.resolvedUrl("../icons/claude-logo.svg")
-                    Layout.preferredWidth: 10
-                    Layout.preferredHeight: 10
-                    sourceSize: Qt.size(10, 10)
-                    fillMode: Image.PreserveAspectFit
-                    opacity: 0.4
-                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
 
-                PlasmaComponents3.Label {
-                    text: (root.usageData.lifetime?.totalSessions ?? 0) + " sessions"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
-                    opacity: 0.3
-                }
-
-                Rectangle { width: 3; height: 3; radius: 1.5; color: Kirigami.Theme.textColor; opacity: 0.15 }
-
-                PlasmaComponents3.Label {
-                    text: {
-                        var s = root.usageData.lifetime?.firstSession ?? "";
-                        if (!s) return "";
-                        return "since " + new Date(s).toLocaleDateString(Qt.locale(), "MMM yyyy");
+                    Image {
+                        source: Qt.resolvedUrl("../icons/claude-logo.svg")
+                        Layout.preferredWidth: 10
+                        Layout.preferredHeight: 10
+                        sourceSize: Qt.size(10, 10)
+                        fillMode: Image.PreserveAspectFit
+                        opacity: 0.4
                     }
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
-                    opacity: 0.3
-                }
 
-                // Streak badge
-                Rectangle {
-                    visible: (root.usageData.streak?.days ?? 0) > 1
-                    radius: height / 2
-                    color: Qt.rgba(root.claudeAmber.r, root.claudeAmber.g, root.claudeAmber.b, 0.15)
-                    implicitWidth: _streakLbl.implicitWidth + 10
-                    implicitHeight: _streakLbl.implicitHeight + 4
                     PlasmaComponents3.Label {
-                        id: _streakLbl; anchors.centerIn: parent
-                        text: (root.usageData.streak?.days ?? 0) + "d streak"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
-                        font.weight: Font.Bold; color: root.claudeAmber
+                        text: (root.usageData.lifetime?.totalSessions ?? 0) + " sessions"
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
+                        opacity: 0.3
                     }
-                }
 
-                // Longest-session badge (compact, only when data known)
-                Rectangle {
-                    visible: (root.usageData.lifetime?.longestSession?.duration ?? 0) > 60000
-                    radius: height / 2
-                    color: Qt.rgba(root.blueAccent.r, root.blueAccent.g, root.blueAccent.b, 0.12)
-                    implicitWidth: _longestLbl.implicitWidth + 10
-                    implicitHeight: _longestLbl.implicitHeight + 4
+                    Rectangle { width: 3; height: 3; radius: 1.5; color: Kirigami.Theme.textColor; opacity: 0.15 }
+
                     PlasmaComponents3.Label {
-                        id: _longestLbl; anchors.centerIn: parent
                         text: {
-                            var ms = root.usageData.lifetime?.longestSession?.duration ?? 0;
-                            var mins = Math.floor(ms / 60000);
-                            if (mins >= 60) return "longest " + Math.floor(mins / 60) + "h" + (mins % 60) + "m";
-                            return "longest " + mins + "m";
+                            var s = root.usageData.lifetime?.firstSession ?? "";
+                            if (!s) return "";
+                            return "since " + new Date(s).toLocaleDateString(Qt.locale(), "MMM yyyy");
                         }
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
-                        font.weight: Font.Bold; color: root.blueAccent
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.825
+                        opacity: 0.3
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
                     }
-                }
 
-                // Plugin-count pill — useful signal of tooling leverage
-                Rectangle {
-                    visible: (root.usageData.settings?.pluginCount ?? 0) > 0
-                    radius: height / 2
-                    color: Qt.rgba(root.greenAccent.r, root.greenAccent.g, root.greenAccent.b, 0.12)
-                    implicitWidth: _pluginLbl.implicitWidth + 10
-                    implicitHeight: _pluginLbl.implicitHeight + 4
+                    // Version
                     PlasmaComponents3.Label {
-                        id: _pluginLbl; anchors.centerIn: parent
-                        text: (root.usageData.settings?.pluginCount ?? 0) + " plugins"
-                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
-                        font.weight: Font.Bold; color: root.greenAccent
+                        visible: (root.usageData.claudeCodeVersion ?? "") !== ""
+                        text: root.usageData.claudeCodeVersion ?? ""
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
+                        opacity: 0.2
+                    }
+
+                    Rectangle {
+                        visible: (root.usageData.claudeCodeVersion ?? "") !== ""
+                        width: 3; height: 3; radius: 1.5
+                        color: Kirigami.Theme.textColor; opacity: 0.15
+                    }
+
+                    PlasmaComponents3.Label {
+                        text: "Anthropic"
+                        font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
+                        font.weight: Font.DemiBold
+                        opacity: 0.2
                     }
                 }
 
-                Item { Layout.fillWidth: true }
+                // Badges line — only rendered when at least one badge is visible,
+                // keeps the first footer row clean on cold-start/empty accounts.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    visible: (root.usageData.streak?.days ?? 0) > 1
+                          || (root.usageData.lifetime?.longestSession?.duration ?? 0) > 60000
+                          || (root.usageData.settings?.pluginCount ?? 0) > 0
 
-                // Version
-                PlasmaComponents3.Label {
-                    visible: (root.usageData.claudeCodeVersion ?? "") !== ""
-                    text: root.usageData.claudeCodeVersion ?? ""
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.828
-                    opacity: 0.2
-                }
+                    // Streak badge
+                    Rectangle {
+                        visible: (root.usageData.streak?.days ?? 0) > 1
+                        radius: height / 2
+                        color: Qt.rgba(root.claudeAmber.r, root.claudeAmber.g, root.claudeAmber.b, 0.15)
+                        implicitWidth: _streakLbl.implicitWidth + 10
+                        implicitHeight: _streakLbl.implicitHeight + 4
+                        PlasmaComponents3.Label {
+                            id: _streakLbl; anchors.centerIn: parent
+                            text: (root.usageData.streak?.days ?? 0) + "d streak"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.weight: Font.Bold; color: root.claudeAmber
+                        }
+                    }
 
-                Rectangle { width: 3; height: 3; radius: 1.5; color: Kirigami.Theme.textColor; opacity: 0.15;
-                    visible: (root.usageData.claudeCodeVersion ?? "") !== "" }
+                    // Longest-session badge
+                    Rectangle {
+                        visible: (root.usageData.lifetime?.longestSession?.duration ?? 0) > 60000
+                        radius: height / 2
+                        color: Qt.rgba(root.blueAccent.r, root.blueAccent.g, root.blueAccent.b, 0.12)
+                        implicitWidth: _longestLbl.implicitWidth + 10
+                        implicitHeight: _longestLbl.implicitHeight + 4
+                        PlasmaComponents3.Label {
+                            id: _longestLbl; anchors.centerIn: parent
+                            text: {
+                                var ms = root.usageData.lifetime?.longestSession?.duration ?? 0;
+                                var mins = Math.floor(ms / 60000);
+                                if (mins >= 60) return "longest " + Math.floor(mins / 60) + "h" + (mins % 60) + "m";
+                                return "longest " + mins + "m";
+                            }
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.weight: Font.Bold; color: root.blueAccent
+                        }
+                    }
 
-                PlasmaComponents3.Label {
-                    text: "Anthropic"
-                    font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.82
-                    font.weight: Font.DemiBold
-                    opacity: 0.2
+                    // Plugin-count pill
+                    Rectangle {
+                        visible: (root.usageData.settings?.pluginCount ?? 0) > 0
+                        radius: height / 2
+                        color: Qt.rgba(root.greenAccent.r, root.greenAccent.g, root.greenAccent.b, 0.12)
+                        implicitWidth: _pluginLbl.implicitWidth + 10
+                        implicitHeight: _pluginLbl.implicitHeight + 4
+                        PlasmaComponents3.Label {
+                            id: _pluginLbl; anchors.centerIn: parent
+                            text: (root.usageData.settings?.pluginCount ?? 0) + " plugins"
+                            font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 0.8
+                            font.weight: Font.Bold; color: root.greenAccent
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
                 }
             }
+
         }
         } // Flickable
     }
