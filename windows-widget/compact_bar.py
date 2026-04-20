@@ -152,29 +152,6 @@ class CompactBar(QWidget):
                 color: rgba(255,255,255,0.65);
             }}
         """)
-        self._position_taskbar_right()
-        screen = QGuiApplication.primaryScreen()
-        if screen is not None:
-            screen.geometryChanged.connect(lambda _: self._position_taskbar_right())
-            screen.availableGeometryChanged.connect(lambda _: self._position_taskbar_right())
-
-        self._reposition_timer = QTimer(self)
-        self._reposition_timer.setInterval(1000)
-        self._reposition_timer.timeout.connect(self._position_taskbar_right)
-        self._reposition_timer.start()
-
-    def _position_taskbar_right(self):
-        screen = QGuiApplication.primaryScreen()
-        if screen is None:
-            return
-        geo = screen.geometry()
-        bar_x = geo.x() + geo.width() - BAR_WIDTH - TRAY_RIGHT_OFFSET
-        bar_y = geo.y() + geo.height() - BAR_HEIGHT - BAR_BOTTOM_MARGIN
-        self.move(bar_x, bar_y)
-        self.raise_()
-        if not self.isVisible():
-            self.show()
-
         # Sprite cache
         self._sprites: dict[str, list[QPixmap]] = {}
         self._sprite_frame = 0
@@ -216,6 +193,29 @@ class CompactBar(QWidget):
 
         self._load_sprites()
         self._apply_sprite()
+
+        self._position_taskbar_right()
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            screen.geometryChanged.connect(lambda _: self._position_taskbar_right())
+            screen.availableGeometryChanged.connect(lambda _: self._position_taskbar_right())
+
+        self._reposition_timer = QTimer(self)
+        self._reposition_timer.setInterval(1000)
+        self._reposition_timer.timeout.connect(self._position_taskbar_right)
+        self._reposition_timer.start()
+
+    def _position_taskbar_right(self):
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = screen.geometry()
+        bar_x = geo.x() + geo.width() - BAR_WIDTH - TRAY_RIGHT_OFFSET
+        bar_y = geo.y() + geo.height() - BAR_HEIGHT - BAR_BOTTOM_MARGIN
+        self.move(bar_x, bar_y)
+        self.raise_()
+        if not self.isVisible():
+            self.show()
 
     def _load_sprites(self):
         for level, cfg in SPRITE_MAP.items():

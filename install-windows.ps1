@@ -11,9 +11,11 @@ $RepoDir       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ClaudeDir     = "$env:USERPROFILE\.claude"
 $BinDir        = "$env:LOCALAPPDATA\ClaudeUsageMonitor"
 $WidgetDir     = "$BinDir\widget"
+$ExtDir        = "$BinDir\chrome-extension"
 $CollectorSrc  = "$RepoDir\scripts\claude-usage-collector.py"
 $CollectorDst  = "$BinDir\claude-usage-collector.py"
 $WidgetSrc     = "$RepoDir\windows-widget"
+$ExtSrc        = "$RepoDir\chrome-extension"
 
 function Write-Step($num, $total, $msg) { Write-Host "`n[$num/$total] $msg" -ForegroundColor Yellow }
 function Write-OK($msg)   { Write-Host "  + $msg" -ForegroundColor Green }
@@ -78,6 +80,12 @@ if (Test-Path $assetsDst) { Remove-Item $assetsDst -Recurse -Force }
 Copy-Item $assetsSrc $assetsDst -Recurse -Force
 Write-OK "Widget files copied"
 
+# Chrome extension (unpacked)
+if (Test-Path $ExtDir) { Remove-Item $ExtDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $ExtDir | Out-Null
+Copy-Item "$ExtSrc\*" $ExtDir -Recurse -Force
+Write-OK "Chrome extension staged at $ExtDir"
+
 # --- 4. Install Python deps ---
 Write-Step 4 6 "Installing Python dependencies..."
 & $python -m pip install --quiet --upgrade pip 2>$null
@@ -141,5 +149,15 @@ Write-Host ""
 Write-Host "  The top strip should appear after a second." -ForegroundColor Gray
 Write-Host "  Click it to open the full popup." -ForegroundColor Gray
 Write-Host "  Collector refreshes every 60s." -ForegroundColor Gray
+Write-Host ""
+Write-Host "=========================================" -ForegroundColor White
+Write-Host "  ONE-TIME Chrome extension setup         " -ForegroundColor Yellow
+Write-Host "=========================================" -ForegroundColor White
+Write-Host "  To keep cookies fresh automatically:" -ForegroundColor Gray
+Write-Host "    1. Open chrome://extensions" -ForegroundColor Gray
+Write-Host "    2. Toggle 'Developer mode' (top-right)" -ForegroundColor Gray
+Write-Host "    3. Click 'Load unpacked' and select:" -ForegroundColor Gray
+Write-Host "       $ExtDir" -ForegroundColor Cyan
+Write-Host "    4. Visit claude.ai once to trigger the first sync" -ForegroundColor Gray
 Write-Host ""
 Read-Host "Press Enter to close"
