@@ -842,15 +842,15 @@ def fetch_overage_data():
     if spend_limit:
         currency = spend_limit.get("currency", "USD")
         result["enabled"] = spend_limit.get("is_enabled", False)
-        result["monthlyLimit"] = spend_limit.get("monthly_credit_limit", 0) / 100
-        result["usedCredits"] = spend_limit.get("used_credits", 0) / 100
+        result["monthlyLimit"] = (spend_limit.get("monthly_credit_limit") or 0) / 100
+        result["usedCredits"] = (spend_limit.get("used_credits") or 0) / 100
         result["currency"] = currency
         result["disabledReason"] = spend_limit.get("disabled_reason", "")
         result["outOfCredits"] = spend_limit.get("out_of_credits", False)
     if credit_grant:
         result["grantAvailable"] = credit_grant.get("available", False)
-        result["grantAmount"] = credit_grant.get("amount_minor_units", 0) / 100
-        result["grantCurrency"] = credit_grant.get("currency", "USD")
+        result["grantAmount"] = (credit_grant.get("amount_minor_units") or 0) / 100
+        result["grantCurrency"] = credit_grant.get("currency") or "USD"
     return result
 
 
@@ -1272,8 +1272,8 @@ def build_rate_limits():
 
         # Add credits info (full details)
         if credits_data:
-            amount = credits_data.get("amount", 0)
-            currency = credits_data.get("currency", "USD")
+            amount = credits_data.get("amount") or 0
+            currency = credits_data.get("currency") or "USD"
             auto_reload = credits_data.get("auto_reload_settings")
             pending = credits_data.get("pending_invoice_amount_cents")
             result["credits"] = {
@@ -1611,8 +1611,15 @@ def run_health_check():
             report["source"] = rl.get("source", "local_estimate")
             report["ok"] = report["source"] == "api"
         except Exception as e:
+            # Reaching this branch means the API responded but our code crashed
+            # processing the payload — it's a collector bug, not an auth problem.
             report["source"] = "local_estimate"
-            report["advice"].append(f"API call raised {type(e).__name__}: {e}")
+            report["collectorError"] = f"{type(e).__name__}: {e}"
+            report["advice"].append(
+                f"Collector bug (not an auth failure): {type(e).__name__}: {e}. "
+                "Please report this at https://github.com/MrSchrodingers/claude-usage-widget/issues "
+                "with the output of: claude-usage-collector.py --verbose"
+            )
     else:
         report["source"] = "local_estimate"
 
@@ -1637,7 +1644,7 @@ def run_health_check():
             report["advice"].append("Chrome: stale KWallet entry blocked decryption. Try: kwallet-query -w 'Chrome Keys' -f 'Chrome Safe Storage' kdewallet  (then restart Chrome).")
         if report["chrome"]["present"] and report["chrome"]["decrypted"] == 0 and report["chrome"].get("reason") != "stale keyring entry — Chrome is using basic/peanuts encryption (common on KDE/Wayland when XDG portal fails)":
             report["advice"].append("Chrome: cookies exist but couldn't be decrypted. Make sure Chrome is fully closed during collection, or try logging in again.")
-        if report["winner"] and report["source"] != "api":
+        if report["winner"] and report["source"] != "api" and not report.get("collectorError"):
             report["advice"].append("Got cookies but API rejected them — session may be expired. Re-login at https://claude.ai.")
 
     # Machine-readable (stdout) — installers parse this
