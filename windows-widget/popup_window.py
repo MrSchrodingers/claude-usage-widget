@@ -1067,7 +1067,12 @@ class TrendCard(QFrame):
         v.addWidget(self.chart)
 
     def update_data(self, data: dict):
-        self.chart.set_data(data.get("trend7d") or [])
+        trend = data.get("trend7d") or []
+        if not any((d.get("tokens") or 0) for d in trend):
+            self.hide()
+            return
+        self.show()
+        self.chart.set_data(trend)
 
 
 # ── Peak Hours Card ────────────────────────────────────────────────

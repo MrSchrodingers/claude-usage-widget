@@ -9,6 +9,7 @@ import json
 import os
 import glob
 import sys
+import time
 import ctypes
 import urllib.request
 import urllib.error
@@ -68,13 +69,133 @@ def calculate_cost(model, input_t, output_t, cache_read_t, cache_create_t):
     )
 
 
-def load_stats_cache():
-    """Load the stats-cache.json file."""
-    path = CLAUDE_DIR / "stats-cache.json"
-    if not path.exists():
+def _build_local_stats():
+    """Build a stats-cache-equivalent dict by sweeping ~/.claude/projects/*.jsonl.
+
+    Used when no external stats-cache.json is present (typical Windows install
+    without ccusage / claude-stats CLI). Returns the same shape the rest of the
+    collector expects: dailyModelTokens, dailyActivity, hourCounts,
+    totalSessions, totalMessages, firstSessionDate, modelUsage.
+    """
+    projects_dir = CLAUDE_DIR / "projects"
+    if not projects_dir.exists():
         return None
-    with open(path) as f:
-        return json.load(f)
+
+    daily = defaultdict(lambda: {
+        "tokensByModel": defaultdict(int),
+        "messageCount": 0,
+        "sessions": set(),
+    })
+    hour_counts = defaultdict(int)
+    sessions_all = set()
+    total_messages = 0
+    first_dt = None
+    model_usage = defaultdict(lambda: {
+        "inputTokens": 0, "outputTokens": 0,
+        "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+    })
+
+    for jsonl_file in projects_dir.rglob("*.jsonl"):
+        try:
+            with open(jsonl_file, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    ts = record.get("timestamp")
+                    rec_date = parse_timestamp(ts) if ts else None
+                    if not rec_date:
+                        continue
+
+                    if first_dt is None or rec_date < first_dt:
+                        first_dt = rec_date
+
+                    local_dt = rec_date.astimezone()
+                    date_key = local_dt.strftime("%Y-%m-%d")
+                    hour_key = local_dt.hour
+
+                    sid = record.get("sessionId") or ""
+                    if sid:
+                        sessions_all.add(sid)
+                        daily[date_key]["sessions"].add(sid)
+
+                    rec_type = record.get("type", "")
+                    msg = record.get("message", {})
+                    is_assistant = (rec_type == "assistant" or msg.get("role") == "assistant")
+                    if is_assistant:
+                        total_messages += 1
+                        daily[date_key]["messageCount"] += 1
+                        hour_counts[hour_key] += 1
+
+                    usage = msg.get("usage") or {}
+                    model = msg.get("model") or ""
+                    if usage and model:
+                        inp = usage.get("input_tokens", 0) or 0
+                        out = usage.get("output_tokens", 0) or 0
+                        cr = usage.get("cache_read_input_tokens", 0) or 0
+                        cc = usage.get("cache_creation_input_tokens", 0) or 0
+                        daily[date_key]["tokensByModel"][model] += inp + out + cr + cc
+                        model_usage[model]["inputTokens"] += inp
+                        model_usage[model]["outputTokens"] += out
+                        model_usage[model]["cacheReadInputTokens"] += cr
+                        model_usage[model]["cacheCreationInputTokens"] += cc
+        except OSError:
+            continue
+
+    daily_model_tokens = [
+        {"date": d, "tokensByModel": dict(v["tokensByModel"])}
+        for d, v in daily.items()
+    ]
+    daily_activity = [
+        {"date": d, "messageCount": v["messageCount"], "sessionCount": len(v["sessions"])}
+        for d, v in daily.items()
+    ]
+
+    return {
+        "dailyModelTokens": daily_model_tokens,
+        "dailyActivity": daily_activity,
+        "hourCounts": {str(h): c for h, c in hour_counts.items()},
+        "totalSessions": len(sessions_all),
+        "totalMessages": total_messages,
+        "firstSessionDate": first_dt.isoformat() if first_dt else "",
+        "modelUsage": {m: dict(u) for m, u in model_usage.items()},
+    }
+
+
+def load_stats_cache():
+    """Load stats. Prefers external stats-cache.json (legacy, written by
+    ccusage / claude-stats CLIs). Otherwise builds from local JSONLs and
+    caches the result in ~/.claude/widget-stats-cache.json (rebuilt every
+    10 min)."""
+    legacy = CLAUDE_DIR / "stats-cache.json"
+    if legacy.exists():
+        try:
+            with open(legacy) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    own = CLAUDE_DIR / "widget-stats-cache.json"
+    try:
+        if own.exists() and (time.time() - own.stat().st_mtime) < 600:
+            with open(own) as f:
+                return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    stats = _build_local_stats()
+    if stats is not None:
+        try:
+            with open(own, "w") as f:
+                json.dump(stats, f)
+        except OSError:
+            pass
+    return stats
 
 
 def parse_timestamp(ts):
